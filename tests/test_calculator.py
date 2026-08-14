@@ -1,4 +1,14 @@
-from bandori_event_calculator.calculator import calculate_required_games
+import pytest
+from bandori_event_calculator.calculator import (
+    calculate_required_games,
+    calculate_target,
+    calculate_projected_final_score,
+    calculate_expected_score,
+    calculate_score_gap,
+    calculate_tier_quartile,
+    calculate_tier_average,
+    calculate_challenge,
+)
 
 def test_calculate_required_games():
     result = calculate_required_games(
@@ -8,17 +18,6 @@ def test_calculate_required_games():
     )
 
     assert result == 144
-    
-from bandori_event_calculator.calculator import (
-    calculate_required_games,
-    calculate_target,
-    calculate_projected_final_score,
-    calculate_expected_score,
-    calculate_score_gap,
-    calculate_tier_quartile,
-    calculate_tier_average,
-)
-
 
 def test_calculate_required_games():
     result = calculate_required_games(
@@ -102,3 +101,33 @@ def test_tier_average():
     )
 
     assert result == 1_500_000
+    
+def test_calculate_challenge():
+    result = calculate_challenge(
+        coop_score=30_000,
+        earned_cp=100,
+        challenge_score=20_000,
+        current_cp=500,
+    )
+
+    assert result.score_from_earned_cp == 10_000
+    assert result.total_score_per_cycle == 40_000
+    assert result.score_from_current_cp == 50_000
+
+def test_challenge_with_no_current_cp():
+    result = calculate_challenge(
+        coop_score=30_000,
+        earned_cp=100,
+        challenge_score=20_000,
+    )
+
+    assert result.score_from_current_cp == 0
+
+def test_challenge_rejects_invalid_cp_cost():
+    with pytest.raises(ValueError):
+        calculate_challenge(
+            coop_score=30_000,
+            earned_cp=100,
+            challenge_score=20_000,
+            cp_cost=0,
+        )

@@ -11,6 +11,12 @@ class TargetCalculation:
     required_minutes: int
     required_hours: float
 
+@dataclass
+class ChallengeCalculation:
+    score_from_earned_cp: float
+    total_score_per_cycle: float
+    score_from_current_cp: float
+
 def calculate_target(
     target_score: int,
     current_score: int,
@@ -133,3 +139,45 @@ def calculate_tier_average(
     """Calculate the midpoint between two tier scores."""
 
     return math.ceil((score_a + score_b) / 2)
+
+def calculate_challenge(
+    coop_score: int,
+    earned_cp: int,
+    challenge_score: int,
+    current_cp: int = 0,
+    cp_cost: int = 200,
+) -> ChallengeCalculation:
+    """Calculate estimated scores for a Challenge Live event."""
+
+    if coop_score < 0:
+        raise ValueError("coop_score must not be negative")
+
+    if earned_cp < 0:
+        raise ValueError("earned_cp must not be negative")
+
+    if challenge_score < 0:
+        raise ValueError("challenge_score must not be negative")
+
+    if current_cp < 0:
+        raise ValueError("current_cp must not be negative")
+
+    if cp_cost <= 0:
+        raise ValueError("cp_cost must be greater than 0")
+
+    score_per_cp = challenge_score / cp_cost
+
+    score_from_earned_cp = score_per_cp * earned_cp
+
+    total_score_per_cycle = (
+        coop_score + score_from_earned_cp
+    )
+
+    score_from_current_cp = (
+        score_per_cp * current_cp
+    )
+
+    return ChallengeCalculation(
+        score_from_earned_cp=score_from_earned_cp,
+        total_score_per_cycle=total_score_per_cycle,
+        score_from_current_cp=score_from_current_cp,
+    )
