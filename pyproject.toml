@@ -8,7 +8,9 @@ version = "0.1.0"
 description = "A tool for calculating BanG Dream! event targets using Bestdori predictions."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = [
+    "requests>=2.32",
+]
 
 [project.optional-dependencies]
 dev = [
