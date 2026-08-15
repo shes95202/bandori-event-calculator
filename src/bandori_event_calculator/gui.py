@@ -9,6 +9,9 @@ from PySide6.QtCore import (
     Signal,
     Qt,
 )
+from PySide6.QtGui import (
+    QIcon,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -56,9 +59,8 @@ def get_application_directory() -> Path:
     PyInstaller:
         directory containing BandoriEventCalculator.exe
 
-    For a PyInstaller --onefile build, __file__ points to the
-    temporary extraction directory, so sys.executable must be
-    used instead.
+    For a PyInstaller --onefile build, sys.executable is used
+    for persistent files such as settings.json.
     """
 
     if getattr(
@@ -66,15 +68,12 @@ def get_application_directory() -> Path:
         "frozen",
         False,
     ):
-        return Path(
-            sys.executable
-        ).resolve().parent
+        return (
+            Path(sys.executable)
+            .resolve()
+            .parent
+        )
 
-    # gui.py:
-    # repository/
-    # └── src/
-    #     └── bandori_event_calculator/
-    #         └── gui.py
     return (
         Path(__file__)
         .resolve()
@@ -82,18 +81,62 @@ def get_application_directory() -> Path:
     )
 
 
+def get_resource_path(
+    relative_path: str,
+) -> Path:
+    """
+    Return a path to a bundled application resource.
+
+    Development:
+        repository/assets/icon.ico
+
+    PyInstaller --onefile:
+        temporary extraction directory/assets/icon.ico
+    """
+
+    if getattr(
+        sys,
+        "frozen",
+        False,
+    ):
+        bundle_dir = Path(
+            getattr(
+                sys,
+                "_MEIPASS",
+                Path(sys.executable).parent,
+            )
+        )
+
+        return (
+            bundle_dir
+            / relative_path
+        )
+
+    return (
+        get_application_directory()
+        / relative_path
+    )
+
+
 def get_settings_path() -> Path:
     """
     Return the shared settings.json path.
 
-    This file is intentionally placed next to the EXE so that
-    services such as Synology Drive can synchronize it across
-    computers.
+    The file is intentionally stored next to the EXE so that
+    Synology Drive can synchronize it between computers.
     """
 
     return (
         get_application_directory()
         / "settings.json"
+    )
+
+
+def get_icon_path() -> Path:
+    """Return the application icon path."""
+
+    return get_resource_path(
+        "assets/icon.ico"
     )
 
 
@@ -157,8 +200,10 @@ class TargetCard(QGroupBox):
     """
     Display one ranking or pace target.
 
-    Ranking targets and pace benchmarks use the same
-    visual structure.
+    Ranking targets use the normal resource requirement view.
+
+    Pace benchmarks switch to a buffer-oriented view when the
+    player is already ahead of the expected event pace.
     """
 
     def __init__(
@@ -185,6 +230,10 @@ class TargetCard(QGroupBox):
         layout.setVerticalSpacing(
             6
         )
+
+        # -----------------------------------------------------
+        # Values
+        # -----------------------------------------------------
 
         self.current_cutoff_value = (
             self._make_value_label()
@@ -226,6 +275,10 @@ class TargetCard(QGroupBox):
             self._make_value_label()
         )
 
+        # -----------------------------------------------------
+        # Fixed fields
+        # -----------------------------------------------------
+
         self._add_field(
             layout=layout,
             row=0,
@@ -258,52 +311,70 @@ class TargetCard(QGroupBox):
             value=self.status_value,
         )
 
-        self._add_field(
-            layout=layout,
-            row=2,
-            column=0,
-            text="還差分數",
-            value=self.remaining_score_value,
+        # -----------------------------------------------------
+        # Dynamic fields
+        #
+        # These labels change when a benchmark target is ahead.
+        # -----------------------------------------------------
+
+        self.remaining_score_caption = (
+            self._add_field(
+                layout=layout,
+                row=2,
+                column=0,
+                text="還差分數",
+                value=self.remaining_score_value,
+            )
         )
 
-        self._add_field(
-            layout=layout,
-            row=2,
-            column=2,
-            text="還需要",
-            value=self.required_games_value,
+        self.required_games_caption = (
+            self._add_field(
+                layout=layout,
+                row=2,
+                column=2,
+                text="還需要",
+                value=self.required_games_value,
+            )
         )
 
-        self._add_field(
-            layout=layout,
-            row=3,
-            column=0,
-            text="需要火",
-            value=self.required_boosts_value,
+        self.required_boosts_caption = (
+            self._add_field(
+                layout=layout,
+                row=3,
+                column=0,
+                text="需要火",
+                value=self.required_boosts_value,
+            )
         )
 
-        self._add_field(
-            layout=layout,
-            row=3,
-            column=2,
-            text="回火次數",
-            value=self.required_refills_value,
+        self.required_refills_caption = (
+            self._add_field(
+                layout=layout,
+                row=3,
+                column=2,
+                text="回火次數",
+                value=self.required_refills_value,
+            )
         )
 
-        self._add_field(
-            layout=layout,
-            row=4,
-            column=0,
-            text="需要星石",
-            value=self.required_stars_value,
+        self.required_stars_caption = (
+            self._add_field(
+                layout=layout,
+                row=4,
+                column=0,
+                text="需要星石",
+                value=self.required_stars_value,
+            )
         )
 
-        self._add_field(
-            layout=layout,
-            row=4,
-            column=2,
-            text="預估時間",
-            value=self.required_hours_value,
+        self.required_hours_caption = (
+            self._add_field(
+                layout=layout,
+                row=4,
+                column=2,
+                text="預估時間",
+                value=self.required_hours_value,
+            )
         )
 
         layout.setColumnStretch(
@@ -315,6 +386,10 @@ class TargetCard(QGroupBox):
             3,
             1,
         )
+
+    # =========================================================
+    # Field helpers
+    # =========================================================
 
     @staticmethod
     def _make_value_label() -> QLabel:
@@ -350,7 +425,7 @@ class TargetCard(QGroupBox):
         column: int,
         text: str,
         value: QLabel,
-    ) -> None:
+    ) -> QLabel:
         caption = QLabel(
             f"{text}："
         )
@@ -367,6 +442,105 @@ class TargetCard(QGroupBox):
             column + 1,
         )
 
+        return caption
+
+    def _set_default_requirement_labels(
+        self,
+    ) -> None:
+        """Restore the normal resource requirement labels."""
+
+        self.remaining_score_caption.setText(
+            "還差分數："
+        )
+
+        self.required_games_caption.setText(
+            "還需要："
+        )
+
+        self.required_boosts_caption.setText(
+            "需要火："
+        )
+
+        self.required_refills_caption.setText(
+            "回火次數："
+        )
+
+        self.required_stars_caption.setText(
+            "需要星石："
+        )
+
+        self.required_hours_caption.setText(
+            "預估時間："
+        )
+
+    def _set_ahead_buffer_labels(
+        self,
+    ) -> None:
+        """Use buffer-oriented labels for an ahead pace target."""
+
+        self.remaining_score_caption.setText(
+            "超前分數："
+        )
+
+        self.required_games_caption.setText(
+            "完整場緩衝："
+        )
+
+        self.required_boosts_caption.setText(
+            "火力緩衝："
+        )
+
+        self.required_refills_caption.setText(
+            "回火需求："
+        )
+
+        self.required_stars_caption.setText(
+            "星石需求："
+        )
+
+        self.required_hours_caption.setText(
+            "時間緩衝："
+        )
+
+    @staticmethod
+    def _format_buffer_time(
+        minutes: float,
+    ) -> str:
+        """
+        Format an ahead-time buffer.
+
+        Small buffers are easier to understand in minutes,
+        while large buffers are shown in hours.
+        """
+
+        if minutes < 60:
+            return (
+                f"{minutes:.1f} 分鐘"
+            )
+
+        return (
+            f"{minutes / 60:.1f} 小時"
+        )
+
+    @staticmethod
+    def _format_pace_buffer(
+        pace_buffer_games: float,
+    ) -> str:
+        """Format a signed Pace Buffer value."""
+
+        if abs(
+            pace_buffer_games
+        ) < 0.005:
+            return "0.00"
+
+        return (
+            f"{pace_buffer_games:+.2f}"
+        )
+
+    # =========================================================
+    # Normal ranking target
+    # =========================================================
+
     def update_target(
         self,
         title: str,
@@ -376,6 +550,15 @@ class TargetCard(QGroupBox):
         score_gap: int,
         calculation: TargetCalculation,
     ) -> None:
+        """
+        Update a normal ranking target.
+
+        Ranking targets intentionally retain the original
+        requirement-oriented display.
+        """
+
+        self._set_default_requirement_labels()
+
         self.setTitle(
             title
         )
@@ -422,10 +605,176 @@ class TargetCard(QGroupBox):
             f"{calculation.required_hours:.1f} 小時"
         )
 
+    # =========================================================
+    # Pace / benchmark target
+    # =========================================================
+
+    def update_benchmark_target(
+        self,
+        title: str,
+        current_cutoff: int,
+        predicted_score: int,
+        expected_score: int,
+        score_gap: int,
+        calculation: TargetCalculation,
+        average_score: int,
+    ) -> None:
+        """
+        Update a pace benchmark.
+
+        Pace Buffer is:
+
+            (current_score - expected_score) / average_score
+
+        Since score_gap is:
+
+            expected_score - current_score
+
+        this is equivalent to:
+
+            -score_gap / average_score
+
+        Positive = ahead.
+        Negative = behind.
+        """
+
+        if average_score > 0:
+            pace_buffer_games = (
+                -score_gap
+                / average_score
+            )
+        else:
+            pace_buffer_games = 0.0
+
+        pace_buffer_text = (
+            self._format_pace_buffer(
+                pace_buffer_games
+            )
+        )
+
+        self.setTitle(
+            f"{title}  |  "
+            f"Pace Buffer {pace_buffer_text} 場"
+        )
+
+        self.current_cutoff_value.setText(
+            f"{current_cutoff:,}"
+        )
+
+        self.predicted_score_value.setText(
+            f"{predicted_score:,}"
+        )
+
+        self.expected_score_value.setText(
+            f"{expected_score:,}"
+        )
+
+        self.status_value.setText(
+            self._format_score_gap(
+                score_gap
+            )
+        )
+
+        # -----------------------------------------------------
+        # Behind or exactly on pace
+        #
+        # Keep the original resource requirement display.
+        # -----------------------------------------------------
+
+        if score_gap >= 0:
+            self._set_default_requirement_labels()
+
+            self.remaining_score_value.setText(
+                f"{calculation.remaining_score:,}"
+            )
+
+            self.required_games_value.setText(
+                f"{calculation.required_games:,} 場"
+            )
+
+            self.required_boosts_value.setText(
+                f"{calculation.required_boosts:,}"
+            )
+
+            self.required_refills_value.setText(
+                f"{calculation.required_refills:,}"
+            )
+
+            self.required_stars_value.setText(
+                f"{calculation.required_stars:,}"
+            )
+
+            self.required_hours_value.setText(
+                f"{calculation.required_hours:.1f} 小時"
+            )
+
+            return
+
+        # -----------------------------------------------------
+        # Ahead of pace
+        #
+        # Instead of a row of zero requirements, show how much
+        # buffer the player currently has.
+        # -----------------------------------------------------
+
+        self._set_ahead_buffer_labels()
+
+        ahead_score = abs(
+            score_gap
+        )
+
+        full_game_buffer = int(
+            pace_buffer_games
+        )
+
+        boost_buffer = (
+            pace_buffer_games
+            * 3
+        )
+
+        time_buffer_minutes = (
+            pace_buffer_games
+            * 3
+        )
+
+        self.remaining_score_value.setText(
+            f"{ahead_score:,}"
+        )
+
+        self.required_games_value.setText(
+            f"{full_game_buffer:,} 場"
+        )
+
+        self.required_boosts_value.setText(
+            f"{boost_buffer:.1f} 火"
+        )
+
+        # Negative refill/star requirements do not have a useful
+        # real-world meaning, so show that no refill is required.
+        self.required_refills_value.setText(
+            "不需要"
+        )
+
+        self.required_stars_value.setText(
+            "不需要"
+        )
+
+        self.required_hours_value.setText(
+            self._format_buffer_time(
+                time_buffer_minutes
+            )
+        )
+
+    # =========================================================
+    # Clear
+    # =========================================================
+
     def clear_target(
         self,
         title: str = "—",
     ) -> None:
+        self._set_default_requirement_labels()
+
         self.setTitle(
             title
         )
@@ -525,6 +874,17 @@ class MainWindow(QMainWindow):
             "Bandori Event Calculator"
         )
 
+        icon_path = (
+            get_icon_path()
+        )
+
+        if icon_path.exists():
+            self.setWindowIcon(
+                QIcon(
+                    str(icon_path)
+                )
+            )
+
         self.resize(
             1100,
             820,
@@ -543,7 +903,6 @@ class MainWindow(QMainWindow):
 
         self._clear_event_display()
 
-        # Restore saved JP values into visible input fields.
         self._sync_inputs_from_state()
 
         # -----------------------------------------------------
@@ -563,7 +922,7 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
-        # Fetch JP + TW once when application starts
+        # Fetch JP + TW once at application startup
         # -----------------------------------------------------
 
         QTimer.singleShot(
@@ -578,12 +937,7 @@ class MainWindow(QMainWindow):
     def _load_settings(
         self,
     ) -> None:
-        """
-        Load JP/TW user inputs from settings.json.
-
-        Missing or malformed settings fall back to zero rather
-        than preventing the application from starting.
-        """
+        """Load JP/TW player inputs from settings.json."""
 
         if not self.settings_path.exists():
             return
@@ -657,13 +1011,7 @@ class MainWindow(QMainWindow):
     def _save_settings(
         self,
     ) -> None:
-        """
-        Save JP/TW inputs into settings.json.
-
-        A temporary file is written first and then replaced to
-        reduce the chance of leaving a partially written JSON
-        file if the application is interrupted during saving.
-        """
+        """Save JP/TW inputs into settings.json."""
 
         data = {
             server.name: {
@@ -710,13 +1058,10 @@ class MainWindow(QMainWindow):
             )
 
         except OSError:
-            # Saving settings should never crash the calculator.
-            #
-            # For example, Synology Drive may temporarily lock a
-            # file while synchronizing it.
             try:
                 if temporary_path.exists():
                     temporary_path.unlink()
+
             except OSError:
                 pass
 
@@ -724,15 +1069,11 @@ class MainWindow(QMainWindow):
     def _safe_nonnegative_int(
         value: object,
     ) -> int:
-        """
-        Convert a JSON value to a non-negative integer.
-        Invalid values become zero.
-        """
-
         try:
             result = int(
                 value
             )
+
         except (
             TypeError,
             ValueError,
@@ -751,9 +1092,7 @@ class MainWindow(QMainWindow):
     def _apply_theme(
         self,
     ) -> None:
-        """
-        Apply the light sky-blue theme.
-        """
+        """Apply the light sky-blue theme."""
 
         self.setStyleSheet(
             """
@@ -826,6 +1165,7 @@ class MainWindow(QMainWindow):
                 border-radius: 6px;
 
                 padding: 5px 8px;
+
                 min-width: 65px;
             }
 
@@ -839,6 +1179,7 @@ class MainWindow(QMainWindow):
 
             QComboBox::drop-down {
                 border: none;
+
                 width: 24px;
             }
 
@@ -1075,7 +1416,7 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
-        # Current input + event status
+        # Current data + event status
         # -----------------------------------------------------
 
         upper_layout = QHBoxLayout()
@@ -1088,13 +1429,17 @@ class MainWindow(QMainWindow):
             input_group
         )
 
-        self.current_score_edit = QLineEdit()
+        self.current_score_edit = (
+            QLineEdit()
+        )
 
         self.current_score_edit.setPlaceholderText(
             "例如：1,260,000"
         )
 
-        self.average_score_edit = QLineEdit()
+        self.average_score_edit = (
+            QLineEdit()
+        )
 
         self.average_score_edit.setPlaceholderText(
             "例如：20,235"
@@ -1149,8 +1494,10 @@ class MainWindow(QMainWindow):
             0,
         )
 
-        self.progress_value_label = QLabel(
-            "—"
+        self.progress_value_label = (
+            QLabel(
+                "—"
+            )
         )
 
         status_layout.addWidget(
@@ -1167,8 +1514,10 @@ class MainWindow(QMainWindow):
             0,
         )
 
-        self.projected_final_value_label = QLabel(
-            "—"
+        self.projected_final_value_label = (
+            QLabel(
+                "—"
+            )
         )
 
         status_layout.addWidget(
@@ -1207,7 +1556,7 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
-        # Pace benchmark targets
+        # Pace / interval targets
         # -----------------------------------------------------
 
         benchmark_title = QLabel(
@@ -1240,7 +1589,9 @@ class MainWindow(QMainWindow):
             benchmark_title
         )
 
-        benchmark_layout = QHBoxLayout()
+        benchmark_layout = (
+            QHBoxLayout()
+        )
 
         self.benchmark_cards = [
             TargetCard(
@@ -1296,7 +1647,9 @@ class MainWindow(QMainWindow):
             ranking_title
         )
 
-        ranking_layout = QHBoxLayout()
+        ranking_layout = (
+            QHBoxLayout()
+        )
 
         self.ranking_cards = [
             TargetCard(
@@ -1322,6 +1675,10 @@ class MainWindow(QMainWindow):
         )
 
         main_layout.addStretch()
+
+    # =========================================================
+    # Signals
+    # =========================================================
 
     def _connect_signals(
         self,
@@ -1349,12 +1706,6 @@ class MainWindow(QMainWindow):
     def _server_changed(
         self,
     ) -> None:
-        """
-        Switch to the cached state for the selected server.
-
-        This does NOT fetch Bestdori.
-        """
-
         server = (
             self.server_combo.currentData()
         )
@@ -1376,10 +1727,6 @@ class MainWindow(QMainWindow):
     def _sync_inputs_from_state(
         self,
     ) -> None:
-        """
-        Restore saved values for the selected server.
-        """
-
         self.current_score_edit.blockSignals(
             True
         )
@@ -1388,23 +1735,19 @@ class MainWindow(QMainWindow):
             True
         )
 
-        if (
-            self.state.current_score
-            > 0
-        ):
+        if self.state.current_score > 0:
             self.current_score_edit.setText(
                 f"{self.state.current_score:,}"
             )
+
         else:
             self.current_score_edit.clear()
 
-        if (
-            self.state.average_score
-            > 0
-        ):
+        if self.state.average_score > 0:
             self.average_score_edit.setText(
                 f"{self.state.average_score:,}"
             )
+
         else:
             self.average_score_edit.clear()
 
@@ -1423,14 +1766,7 @@ class MainWindow(QMainWindow):
     def refresh_bestdori(
         self,
     ) -> None:
-        """
-        Refresh JP and TW Bestdori snapshots.
-        """
-
-        if (
-            self.refresh_thread
-            is not None
-        ):
+        if self.refresh_thread is not None:
             return
 
         self.refresh_button.setEnabled(
@@ -1477,10 +1813,7 @@ class MainWindow(QMainWindow):
         for server, state in (
             self.states.items()
         ):
-            if (
-                server
-                not in snapshots
-            ):
+            if server not in snapshots:
                 continue
 
             state.snapshot = (
@@ -1510,10 +1843,7 @@ class MainWindow(QMainWindow):
     def _refresh_finished(
         self,
     ) -> None:
-        if (
-            self.refresh_thread
-            is not None
-        ):
+        if self.refresh_thread is not None:
             self.refresh_thread.deleteLater()
 
             self.refresh_thread = None
@@ -1625,7 +1955,6 @@ class MainWindow(QMainWindow):
             score
         )
 
-        # Save both JP and TW states immediately.
         self._save_settings()
 
         self._update_calculation_display()
@@ -1667,16 +1996,10 @@ class MainWindow(QMainWindow):
         for state in (
             self.states.values()
         ):
-            if (
-                state.snapshot
-                is None
-            ):
+            if state.snapshot is None:
                 continue
 
-            if (
-                state.average_score
-                <= 0
-            ):
+            if state.average_score <= 0:
                 continue
 
             state.recalculate()
@@ -1710,13 +2033,14 @@ class MainWindow(QMainWindow):
             self.projected_final_value_label.setText(
                 f"{calculation.projected_final_score:,}"
             )
+
         else:
             self.projected_final_value_label.setText(
                 "—"
             )
 
         # -----------------------------------------------------
-        # Benchmark cards
+        # Benchmark / pace cards
         # -----------------------------------------------------
 
         benchmarks = list(
@@ -1726,9 +2050,8 @@ class MainWindow(QMainWindow):
         for index, card in enumerate(
             self.benchmark_cards
         ):
-            if (
-                index
-                >= len(benchmarks)
+            if index >= len(
+                benchmarks
             ):
                 card.clear_target()
 
@@ -1749,6 +2072,7 @@ class MainWindow(QMainWindow):
             self._update_benchmark_card(
                 card=card,
                 result=benchmark,
+                average_score=calculation.average_score,
             )
 
         # -----------------------------------------------------
@@ -1763,9 +2087,8 @@ class MainWindow(QMainWindow):
         for index, card in enumerate(
             self.ranking_cards
         ):
-            if (
-                index
-                >= len(tiers)
+            if index >= len(
+                tiers
             ):
                 card.clear_target()
 
@@ -1793,14 +2116,16 @@ class MainWindow(QMainWindow):
     def _update_benchmark_card(
         card: TargetCard,
         result: BenchmarkResult,
+        average_score: int,
     ) -> None:
-        card.update_target(
+        card.update_benchmark_target(
             title=result.label,
             current_cutoff=result.current_cutoff,
             predicted_score=result.predicted_score,
             expected_score=result.expected_score,
             score_gap=result.score_gap,
             calculation=result.calculation,
+            average_score=average_score,
         )
 
     @staticmethod
@@ -1882,6 +2207,21 @@ def main() -> None:
     app = QApplication(
         sys.argv
     )
+
+    app.setApplicationName(
+        "Bandori Event Calculator"
+    )
+
+    icon_path = (
+        get_icon_path()
+    )
+
+    if icon_path.exists():
+        app.setWindowIcon(
+            QIcon(
+                str(icon_path)
+            )
+        )
 
     window = MainWindow()
 
