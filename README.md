@@ -1,23 +1,32 @@
 # Bandori Event Calculator
 
-A Windows desktop calculator for tracking BanG Dream! Girls Band Party! event pace using live event data from [Bestdori](https://bestdori.com/).
+[English](README.md) | [繁體中文](README_zh-TW.md)
 
-The application retrieves current event cutoffs and Bestdori predictions, then calculates how much Event Point progress is needed to reach selected ranking and pace targets.
+A Windows desktop calculator for tracking **BanG Dream! Girls Band Party!** event pace using live event data from [Bestdori](https://bestdori.com/).
+
+The application retrieves event cutoffs and Bestdori predictions, then calculates how much Event Point progress is needed to reach selected ranking and pace targets.
+
+When no event is currently active, the calculator automatically falls back to the most recently completed event so you can still review the final cutoffs and compare them with your own score.
 
 ## Features
 
 - Windows desktop GUI built with PySide6
 - JP and TW server support
 - Automatic current-event detection
+- Automatic fallback to the most recently completed event when no event is active
 - Automatic Bestdori data loading on startup
 - Manual Bestdori refresh
 - Cached JP/TW data for instant server switching
 - Current cutoff display
-- Bestdori predicted cutoff display
+- Bestdori predicted cutoff display for active events
+- Final cutoff display for completed events
 - Event progress calculation
+- Live countdown to event end, updated every second
+- Event start/end times displayed in the computer's local timezone
 - Current pace projected final score
 - Ranking target calculations
 - Pace / interval target calculations
+- Ahead / behind comparison in both Event Points and equivalent games
 - Required games calculation
 - Required boosts calculation
 - Required boost refills
@@ -31,6 +40,8 @@ The application retrieves current event cutoffs and Bestdori predictions, then c
 
 ### JP
 
+Ranking targets:
+
 - T500
 - T1000
 - T2000
@@ -41,6 +52,8 @@ Pace benchmarks:
 - Average of T500 and T1000 predictions
 
 ### TW
+
+Ranking targets:
 
 - T100
 - T500
@@ -62,7 +75,7 @@ The calculator retrieves event information from Bestdori and combines it with tw
 - **Current Score** — your current Event Points
 - **Average Score per Game** — the average Event Points earned per game
 
-The application then calculates two types of targets.
+For an active event, the application calculates two types of targets.
 
 ### Pace Targets
 
@@ -82,12 +95,14 @@ The calculator then shows:
 - Predicted cutoff
 - Expected score at the current event progress
 - Whether you are ahead or behind
-- Remaining Event Points
-- Required games
+- Point difference
+- Equivalent game difference / requirement
 - Required boosts
 - Required refills
 - Required stars
 - Estimated play time
+
+If you are already ahead of a target, the calculator keeps the difference visible so you can see approximately how many games of buffer you currently have.
 
 ### Ranking Targets
 
@@ -96,6 +111,40 @@ Ranking targets answer:
 > How much more do I need to play before the event ends to reach the predicted final cutoff?
 
 These calculations use the predicted final score as the target.
+
+### Event Countdown
+
+While an event is active, the **Event Status** panel shows a live countdown such as:
+
+```text
+3 days 3 hours 12 minutes 31 seconds
+```
+
+The countdown updates every second without reloading Bestdori data every second.
+
+After the event ends, the status changes to `Ended`.
+
+### Completed Events
+
+If there is no currently active event on the selected server, the application automatically displays the most recently completed event using the same calculator layout.
+
+For completed events:
+
+- Event progress is shown as `100.0%`
+- Event countdown is shown as `Ended`
+- The final Bestdori cutoff is used in place of a future prediction
+- You can enter your final score and compare it directly against the event's final ranking cutoffs
+- Ahead / behind calculations, equivalent games, boosts, refills, stars, and estimated play time remain available
+
+This makes it possible to review how your final result compared with the previous event even after it has disappeared from the active-event list.
+
+## Local Timezone Support
+
+Event start and end timestamps are converted to the **computer's current local timezone**.
+
+For example, if Windows is set to Taiwan time, the application displays Taiwan-local timestamps. If you travel and Windows automatically switches to another timezone, the displayed event times change accordingly.
+
+The underlying event progress and countdown calculations use absolute timestamps, so changing timezone does not change the actual remaining duration of an event.
 
 ## Player Settings
 
@@ -153,7 +202,7 @@ When the application starts, it automatically retrieves the latest JP and TW eve
 
 ### Requirements
 
-- Python 3
+- Python 3.10+
 - PySide6
 - Playwright
 - Chromium
@@ -199,6 +248,12 @@ python run_gui.py
 
 ## Tests
 
+Install the development dependencies if needed:
+
+```powershell
+pip install -e ".[dev]"
+```
+
 Run the test suite with:
 
 ```powershell
@@ -225,6 +280,8 @@ Build the application:
 ```powershell
 pyinstaller --noconfirm --clean --onefile --windowed `
     --name BandoriEventCalculator `
+    --icon assets/icon.ico `
+    --add-data "assets/icon.ico:assets" `
     run_gui.py
 ```
 
@@ -233,6 +290,8 @@ The executable will be created at:
 ```text
 dist/BandoriEventCalculator.exe
 ```
+
+Before publishing a release, launch the executable from `dist/` and verify that Bestdori loading, JP/TW switching, calculations, the event countdown, and the application icon all work correctly.
 
 ## Application Data
 
@@ -278,5 +337,5 @@ This project is an independent tool and is not affiliated with Bestdori, Bushiro
 Current release:
 
 ```text
-v0.1.0
+v0.3.0
 ```

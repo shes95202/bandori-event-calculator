@@ -4,6 +4,7 @@ import bandori_event_calculator.bestdori as bestdori
 from bandori_event_calculator.bestdori import (
     Server,
     find_current_event,
+    find_previous_event,
     parse_cutoffs,
     parse_events,
     get_tracked_tiers,
@@ -210,6 +211,70 @@ def test_find_current_event():
     assert result.id == 101
     assert result.name == "Current Event"
 
+
+
+def test_find_previous_event():
+    data = {
+        "100": {
+            "eventName": [
+                "Older Event",
+                None,
+                None,
+                None,
+                None,
+            ],
+            "eventType": "mission_live",
+            "startAt": [
+                "1000",
+                None,
+                None,
+                None,
+                None,
+            ],
+            "endAt": [
+                "2000",
+                None,
+                None,
+                None,
+                None,
+            ],
+        },
+        "101": {
+            "eventName": [
+                "Latest Finished Event",
+                None,
+                None,
+                None,
+                None,
+            ],
+            "eventType": "challenge",
+            "startAt": [
+                "3000",
+                None,
+                None,
+                None,
+                None,
+            ],
+            "endAt": [
+                "5000",
+                None,
+                None,
+                None,
+                None,
+            ],
+        },
+    }
+
+    result = find_previous_event(
+        data=data,
+        server=Server.JP,
+        now_ms=6000,
+    )
+
+    assert result is not None
+    assert result.id == 101
+    assert result.name == "Latest Finished Event"
+
 def test_find_current_event_returns_none_when_inactive():
     data = {
         "100": {
@@ -355,3 +420,128 @@ def test_get_current_event_snapshot_returns_none_when_inactive(monkeypatch):
     )
 
     assert result is None
+
+def test_get_display_event_snapshot_uses_previous_event(monkeypatch):
+    previous_event = bestdori.Event(
+        id=338,
+        server=bestdori.Server.TW,
+        name="Previous TW Event",
+        event_type="mission_live",
+        start_at_ms=1000,
+        end_at_ms=2000,
+    )
+
+    cutoffs = {
+        100: bestdori.Cutoff(
+            score=3_000_000,
+            timestamp_ms=2000,
+        ),
+        500: bestdori.Cutoff(
+            score=2_000_000,
+            timestamp_ms=2000,
+        ),
+        1000: bestdori.Cutoff(
+            score=1_000_000,
+            timestamp_ms=2000,
+        ),
+    }
+
+    monkeypatch.setattr(
+        bestdori,
+        "fetch_events_data",
+        lambda: {},
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "find_current_event",
+        lambda data, server, now_ms: None,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "find_previous_event",
+        lambda data, server, now_ms: previous_event,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "get_event_tier_cutoffs",
+        lambda event: cutoffs,
+    )
+
+    result = bestdori.get_display_event_snapshot(
+        bestdori.Server.TW
+    )
+
+    assert result is not None
+    assert result.event == previous_event
+    assert result.cutoffs == cutoffs
+    assert result.predictions == {}
+    assert result.is_active is False
+
+
+def test_get_display_event_snapshot_uses_current_event(monkeypatch):
+    current_event = bestdori.Event(
+        id=339,
+        server=bestdori.Server.JP,
+        name="Current JP Event",
+        event_type="mission_live",
+        start_at_ms=1000,
+        end_at_ms=5000,
+    )
+
+    cutoffs = {
+        500: bestdori.Cutoff(
+            score=2_000_000,
+            timestamp_ms=3000,
+        ),
+        1000: bestdori.Cutoff(
+            score=1_500_000,
+            timestamp_ms=3000,
+        ),
+        2000: bestdori.Cutoff(
+            score=1_000_000,
+            timestamp_ms=3000,
+        ),
+    }
+
+    predictions = {
+        500: 4_000_000,
+        1000: 3_000_000,
+        2000: 2_000_000,
+    }
+
+    monkeypatch.setattr(
+        bestdori,
+        "fetch_events_data",
+        lambda: {},
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "find_current_event",
+        lambda data, server, now_ms: current_event,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "get_event_tier_cutoffs",
+        lambda event: cutoffs,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "fetch_latest_predictions",
+        lambda server: predictions,
+    )
+
+    result = bestdori.get_display_event_snapshot(
+        bestdori.Server.JP
+    )
+
+    assert result is not None
+    assert result.event == current_event
+    assert result.cutoffs == cutoffs
+    assert result.predictions == predictions
+    assert result.is_active is True

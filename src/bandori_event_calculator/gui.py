@@ -1,5 +1,7 @@
 import json
+import math
 import sys
+import time
 
 from pathlib import Path
 
@@ -32,9 +34,10 @@ from bandori_event_calculator.app import (
     TierResult,
 )
 from bandori_event_calculator.bestdori import (
+    Cutoff,
     EventSnapshot,
     Server,
-    get_current_event_snapshot,
+    get_display_event_snapshot,
 )
 from bandori_event_calculator.calculator import (
     TargetCalculation,
@@ -175,7 +178,7 @@ class BestdoriRefreshThread(QThread):
         ):
             try:
                 snapshots[server] = (
-                    get_current_event_snapshot(
+                    get_display_event_snapshot(
                         server
                     )
                 )
@@ -188,6 +191,131 @@ class BestdoriRefreshThread(QThread):
         self.loaded.emit(
             snapshots,
             errors,
+        )
+
+
+# =============================================================
+# Historical final-cutoff card
+# =============================================================
+
+
+class FinalCutoffCard(QGroupBox):
+    """Display the final/latest cutoff of a completed event tier."""
+
+    def __init__(
+        self,
+        title: str = "—",
+    ) -> None:
+        super().__init__(
+            title
+        )
+
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+
+        layout = QGridLayout(
+            self
+        )
+
+        layout.setHorizontalSpacing(
+            12
+        )
+
+        layout.setVerticalSpacing(
+            6
+        )
+
+        self.cutoff_value = QLabel(
+            "—"
+        )
+
+        self.updated_value = QLabel(
+            "—"
+        )
+
+        for label in (
+            self.cutoff_value,
+            self.updated_value,
+        ):
+            font = label.font()
+            font.setBold(
+                True
+            )
+            label.setFont(
+                font
+            )
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignRight
+                | Qt.AlignmentFlag.AlignVCenter
+            )
+            label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
+
+        layout.addWidget(
+            QLabel(
+                "最終分數線："
+            ),
+            0,
+            0,
+        )
+
+        layout.addWidget(
+            self.cutoff_value,
+            0,
+            1,
+        )
+
+        layout.addWidget(
+            QLabel(
+                "最後更新："
+            ),
+            1,
+            0,
+        )
+
+        layout.addWidget(
+            self.updated_value,
+            1,
+            1,
+        )
+
+        layout.setColumnStretch(
+            1,
+            1,
+        )
+
+    def update_cutoff(
+        self,
+        tier: int,
+        cutoff: Cutoff,
+    ) -> None:
+        self.setTitle(
+            f"T{tier}"
+        )
+
+        self.cutoff_value.setText(
+            f"{cutoff.score:,}"
+        )
+
+        self.updated_value.setText(
+            f"{cutoff.datetime_local:%Y-%m-%d %H:%M}"
+        )
+
+    def clear_cutoff(
+        self,
+        title: str = "—",
+    ) -> None:
+        self.setTitle(
+            title
+        )
+        self.cutoff_value.setText(
+            "—"
+        )
+        self.updated_value.setText(
+            "—"
         )
 
 
@@ -922,6 +1050,26 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
+        # Live event countdown timer
+        #
+        # Only the countdown label is updated every second.
+        # The heavier pace calculations continue to refresh
+        # once per minute via local_timer above.
+        # -----------------------------------------------------
+
+        self.countdown_timer = QTimer(
+            self
+        )
+
+        self.countdown_timer.timeout.connect(
+            self._update_countdown_display
+        )
+
+        self.countdown_timer.start(
+            1_000
+        )
+
+        # -----------------------------------------------------
         # Fetch JP + TW once at application startup
         # -----------------------------------------------------
 
@@ -1526,9 +1674,30 @@ class MainWindow(QMainWindow):
             1,
         )
 
+        status_layout.addWidget(
+            QLabel(
+                "距離活動結束："
+            ),
+            2,
+            0,
+        )
+
+        self.countdown_value_label = (
+            QLabel(
+                "—"
+            )
+        )
+
+        status_layout.addWidget(
+            self.countdown_value_label,
+            2,
+            1,
+        )
+
         for label in (
             self.progress_value_label,
             self.projected_final_value_label,
+            self.countdown_value_label,
         ):
             font = label.font()
 
@@ -1559,12 +1728,12 @@ class MainWindow(QMainWindow):
         # Pace / interval targets
         # -----------------------------------------------------
 
-        benchmark_title = QLabel(
+        self.benchmark_title = QLabel(
             "區間目標 — 現在需要打多少才能追上應達進度"
         )
 
         benchmark_font = (
-            benchmark_title.font()
+            self.benchmark_title.font()
         )
 
         benchmark_font.setPointSize(
@@ -1575,18 +1744,18 @@ class MainWindow(QMainWindow):
             True
         )
 
-        benchmark_title.setFont(
+        self.benchmark_title.setFont(
             benchmark_font
         )
 
-        benchmark_title.setStyleSheet(
+        self.benchmark_title.setStyleSheet(
             """
             color: #145B86;
             """
         )
 
         main_layout.addWidget(
-            benchmark_title
+            self.benchmark_title
         )
 
         benchmark_layout = (
@@ -1617,12 +1786,12 @@ class MainWindow(QMainWindow):
         # Final ranking targets
         # -----------------------------------------------------
 
-        ranking_title = QLabel(
+        self.ranking_title = QLabel(
             "排名目標 — 活動結束前的最終需求"
         )
 
         ranking_font = (
-            ranking_title.font()
+            self.ranking_title.font()
         )
 
         ranking_font.setPointSize(
@@ -1633,18 +1802,18 @@ class MainWindow(QMainWindow):
             True
         )
 
-        ranking_title.setFont(
+        self.ranking_title.setFont(
             ranking_font
         )
 
-        ranking_title.setStyleSheet(
+        self.ranking_title.setStyleSheet(
             """
             color: #145B86;
             """
         )
 
         main_layout.addWidget(
-            ranking_title
+            self.ranking_title
         )
 
         ranking_layout = (
@@ -1672,6 +1841,70 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(
             ranking_layout
+        )
+
+        # -----------------------------------------------------
+        # Previous event final cutoffs
+        # -----------------------------------------------------
+
+        self.history_title = QLabel(
+            "上一個活動 — 最終分數線"
+        )
+
+        history_font = (
+            self.history_title.font()
+        )
+
+        history_font.setPointSize(
+            12
+        )
+
+        history_font.setBold(
+            True
+        )
+
+        self.history_title.setFont(
+            history_font
+        )
+
+        self.history_title.setStyleSheet(
+            """
+            color: #145B86;
+            """
+        )
+
+        main_layout.addWidget(
+            self.history_title
+        )
+
+        history_layout = QHBoxLayout()
+
+        self.history_cards = [
+            FinalCutoffCard(
+                "歷史分數線 1"
+            ),
+            FinalCutoffCard(
+                "歷史分數線 2"
+            ),
+            FinalCutoffCard(
+                "歷史分數線 3"
+            ),
+        ]
+
+        for card in self.history_cards:
+            card.setVisible(
+                False
+            )
+            history_layout.addWidget(
+                card
+            )
+
+        self.history_title.setVisible(
+            False
+        )
+
+        main_layout.addLayout(
+            history_layout
         )
 
         main_layout.addStretch()
@@ -1868,6 +2101,8 @@ class MainWindow(QMainWindow):
         )
 
         if snapshot is None:
+            self._show_active_sections()
+
             if (
                 self.state.server
                 in self.load_errors
@@ -1886,7 +2121,7 @@ class MainWindow(QMainWindow):
             else:
                 self.event_name_label.setText(
                     f"{self.state.server.name} "
-                    "目前沒有進行中的活動"
+                    "目前沒有可顯示的活動資料"
                 )
 
                 self.event_detail_label.setText(
@@ -1897,6 +2132,8 @@ class MainWindow(QMainWindow):
 
             return
 
+        self._show_active_sections()
+
         event = (
             snapshot.event
         )
@@ -1905,14 +2142,135 @@ class MainWindow(QMainWindow):
             f"#{event.id} {event.name}"
         )
 
-        self.event_detail_label.setText(
+        event_detail = (
             f"{event.event_type}  |  "
             f"{event.start_datetime_local:%Y-%m-%d %H:%M}"
             " ~ "
             f"{event.end_datetime_local:%Y-%m-%d %H:%M}"
         )
 
+        if not snapshot.is_active:
+            event_detail += "  |  已結束"
+
+        self.event_detail_label.setText(
+            event_detail
+        )
+
         self._update_calculation_display()
+        self._update_countdown_display()
+
+    def _display_previous_event(
+        self,
+        snapshot: EventSnapshot,
+    ) -> None:
+        """Display the most recently completed event as history."""
+
+        event = snapshot.event
+
+        self.event_name_label.setText(
+            f"{self.state.server.name} 目前沒有進行中的活動"
+        )
+
+        self.event_detail_label.setText(
+            f"上一個活動：#{event.id} {event.name}  |  "
+            f"{event.event_type}  |  "
+            f"{event.start_datetime_local:%Y-%m-%d %H:%M}"
+            " ~ "
+            f"{event.end_datetime_local:%Y-%m-%d %H:%M}  |  已結束"
+        )
+
+        self.progress_value_label.setText(
+            "已結束"
+        )
+
+        self.projected_final_value_label.setText(
+            "不適用"
+        )
+
+        self._show_history_sections(
+            snapshot
+        )
+
+    def _show_active_sections(
+        self,
+    ) -> None:
+        self.benchmark_title.setVisible(
+            True
+        )
+        self.ranking_title.setVisible(
+            True
+        )
+
+        for card in self.benchmark_cards:
+            card.setVisible(
+                True
+            )
+
+        for card in self.ranking_cards:
+            card.setVisible(
+                True
+            )
+
+        self.history_title.setVisible(
+            False
+        )
+
+        for card in self.history_cards:
+            card.setVisible(
+                False
+            )
+
+    def _show_history_sections(
+        self,
+        snapshot: EventSnapshot,
+    ) -> None:
+        self.benchmark_title.setVisible(
+            False
+        )
+        self.ranking_title.setVisible(
+            False
+        )
+
+        for card in self.benchmark_cards:
+            card.setVisible(
+                False
+            )
+
+        for card in self.ranking_cards:
+            card.setVisible(
+                False
+            )
+
+        self.history_title.setVisible(
+            True
+        )
+
+        tiers = sorted(
+            snapshot.cutoffs.items(),
+            key=lambda item: item[0],
+        )
+
+        for index, card in enumerate(
+            self.history_cards
+        ):
+            if index >= len(
+                tiers
+            ):
+                card.clear_cutoff()
+                card.setVisible(
+                    False
+                )
+                continue
+
+            tier, cutoff = tiers[index]
+
+            card.update_cutoff(
+                tier=tier,
+                cutoff=cutoff,
+            )
+            card.setVisible(
+                True
+            )
 
     # =========================================================
     # Input
@@ -1981,6 +2339,62 @@ class MainWindow(QMainWindow):
         self._update_calculation_display()
 
     # =========================================================
+    # Event countdown
+    # =========================================================
+
+    def _update_countdown_display(
+        self,
+    ) -> None:
+        """Update the remaining event time once per second."""
+
+        snapshot = (
+            self.state.snapshot
+        )
+
+        if snapshot is None:
+            self.countdown_value_label.setText(
+                "—"
+            )
+            return
+
+        if not snapshot.is_active:
+            self.countdown_value_label.setText(
+                "已結束"
+            )
+            return
+
+        remaining_seconds = math.ceil(
+            snapshot.event.end_at_ms / 1000
+            - time.time()
+        )
+
+        if remaining_seconds <= 0:
+            self.countdown_value_label.setText(
+                "已結束"
+            )
+            return
+
+        days, remainder = divmod(
+            remaining_seconds,
+            86_400,
+        )
+
+        hours, remainder = divmod(
+            remainder,
+            3_600,
+        )
+
+        minutes, seconds = divmod(
+            remainder,
+            60,
+        )
+
+        self.countdown_value_label.setText(
+            f"{days} 天 {hours} 小時 "
+            f"{minutes} 分 {seconds} 秒"
+        )
+
+    # =========================================================
     # Local timer
     # =========================================================
 
@@ -2005,6 +2419,7 @@ class MainWindow(QMainWindow):
             state.recalculate()
 
         self._update_calculation_display()
+        self._update_countdown_display()
 
     # =========================================================
     # Calculation display
@@ -2155,6 +2570,10 @@ class MainWindow(QMainWindow):
         )
 
         self.projected_final_value_label.setText(
+            "—"
+        )
+
+        self.countdown_value_label.setText(
             "—"
         )
 

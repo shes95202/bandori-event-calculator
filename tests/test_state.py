@@ -145,7 +145,7 @@ def test_refresh_bestdori(
 
     monkeypatch.setattr(
         "bandori_event_calculator.state."
-        "bestdori.get_current_event_snapshot",
+        "bestdori.get_display_event_snapshot",
         lambda server: snapshot,
     )
 
@@ -161,3 +161,23 @@ def test_refresh_bestdori(
 
     assert state.snapshot == snapshot
     assert state.calculation is not None
+
+def test_inactive_snapshot_does_not_calculate():
+    snapshot = make_jp_snapshot()
+    inactive_snapshot = EventSnapshot(
+        event=snapshot.event,
+        cutoffs=snapshot.cutoffs,
+        predictions={},
+        is_active=False,
+    )
+
+    state = AppState(
+        server=Server.JP,
+        snapshot=inactive_snapshot,
+        current_score=1_000_000,
+        average_score=20_000,
+    )
+
+    state.recalculate()
+
+    assert state.calculation is None

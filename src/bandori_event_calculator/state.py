@@ -24,7 +24,7 @@ class AppState:
     def refresh_bestdori(self) -> None:
         """Fetch fresh event data from Bestdori."""
 
-        self.snapshot = bestdori.get_current_event_snapshot(
+        self.snapshot = bestdori.get_display_event_snapshot(
             self.server
         )
 

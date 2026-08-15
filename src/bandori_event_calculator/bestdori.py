@@ -3,7 +3,7 @@ import re
 import time
 
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import Any
@@ -13,7 +13,6 @@ from playwright.sync_api import sync_playwright
 
 
 BASE_URL = "https://bestdori.com"
-TAIWAN_TZ = timezone(timedelta(hours=8))
 
 
 class Server(IntEnum):
@@ -48,6 +47,10 @@ class Cutoff:
             tz=timezone.utc,
         )
 
+    @property
+    def datetime_local(self) -> datetime:
+        return self.datetime_utc.astimezone()
+
 
 @dataclass(frozen=True)
 class Event:
@@ -74,15 +77,11 @@ class Event:
 
     @property
     def start_datetime_local(self) -> datetime:
-        return self.start_datetime_utc.astimezone(
-            TAIWAN_TZ
-        )
+        return self.start_datetime_utc.astimezone()
 
     @property
     def end_datetime_local(self) -> datetime:
-        return self.end_datetime_utc.astimezone(
-            TAIWAN_TZ
-        )
+        return self.end_datetime_utc.astimezone()
 
 
 @dataclass(frozen=True)
@@ -90,6 +89,7 @@ class EventSnapshot:
     event: Event
     cutoffs: dict[int, Cutoff]
     predictions: dict[int, int]
+    is_active: bool = True
 
 
 @dataclass(frozen=True)
@@ -369,6 +369,33 @@ def find_current_event(
     )
 
 
+def find_previous_event(
+    data: dict[str, Any],
+    server: Server,
+    now_ms: int,
+) -> Event | None:
+    """Find the most recently ended event for a server."""
+
+    events = parse_events(
+        data=data,
+        server=server,
+    )
+
+    previous_events = [
+        event
+        for event in events
+        if event.end_at_ms < now_ms
+    ]
+
+    if not previous_events:
+        return None
+
+    return max(
+        previous_events,
+        key=lambda event: event.end_at_ms,
+    )
+
+
 def get_current_event(
     server: Server,
 ) -> Event | None:
@@ -402,6 +429,25 @@ def get_tracked_tiers(
         )
 
 
+def get_event_tier_cutoffs(
+    event: Event,
+) -> dict[int, Cutoff]:
+    """Get the latest tracked tier cutoffs for a specific event."""
+
+    tiers = get_tracked_tiers(
+        event.server
+    )
+
+    return {
+        tier: get_latest_cutoff(
+            server=event.server,
+            event_id=event.id,
+            tier=tier,
+        )
+        for tier in tiers
+    }
+
+
 def get_current_tier_cutoffs(
     server: Server,
 ) -> dict[int, Cutoff] | None:
@@ -414,18 +460,9 @@ def get_current_tier_cutoffs(
     if event is None:
         return None
 
-    tiers = get_tracked_tiers(
-        server
+    return get_event_tier_cutoffs(
+        event
     )
-
-    return {
-        tier: get_latest_cutoff(
-            server=server,
-            event_id=event.id,
-            tier=tier,
-        )
-        for tier in tiers
-    }
 
 
 def linear_regression(
@@ -588,22 +625,10 @@ def get_event_tracker_url(
     )
 
 
-def get_current_predictions(
+def fetch_latest_predictions(
     server: Server,
-) -> dict[int, int] | None:
-    """
-    Fetch Latest Prediction values rendered by Bestdori.
-
-    Chromium profile data is stored inside the user's
-    application-data directory instead of next to the EXE.
-    """
-
-    event = get_current_event(
-        server
-    )
-
-    if event is None:
-        return None
+) -> dict[int, int]:
+    """Fetch Latest Prediction values rendered by Bestdori."""
 
     tiers = get_tracked_tiers(
         server
@@ -677,6 +702,23 @@ def get_current_predictions(
     return predictions
 
 
+def get_current_predictions(
+    server: Server,
+) -> dict[int, int] | None:
+    """Fetch prediction values for the currently active event."""
+
+    event = get_current_event(
+        server
+    )
+
+    if event is None:
+        return None
+
+    return fetch_latest_predictions(
+        server
+    )
+
+
 def get_current_event_snapshot(
     server: Server,
 ) -> EventSnapshot | None:
@@ -712,3 +754,69 @@ def get_current_event_snapshot(
         cutoffs=cutoffs,
         predictions=predictions,
     )
+
+def get_display_event_snapshot(
+    server: Server,
+) -> EventSnapshot | None:
+    """
+    Fetch the event snapshot that should be shown in the GUI.
+
+    If an event is active, return the normal live snapshot with Bestdori
+    predictions. During the gap between events, return the most recently
+    ended event and reuse its final cutoffs as the final target scores so
+    the GUI can keep the exact same calculation layout.
+    """
+
+    data = fetch_events_data()
+
+    now_ms = int(
+        time.time() * 1000
+    )
+
+    current_event = find_current_event(
+        data=data,
+        server=server,
+        now_ms=now_ms,
+    )
+
+    if current_event is not None:
+        cutoffs = get_event_tier_cutoffs(
+            current_event
+        )
+
+        predictions = fetch_latest_predictions(
+            server
+        )
+
+        return EventSnapshot(
+            event=current_event,
+            cutoffs=cutoffs,
+            predictions=predictions,
+            is_active=True,
+        )
+
+    previous_event = find_previous_event(
+        data=data,
+        server=server,
+        now_ms=now_ms,
+    )
+
+    if previous_event is None:
+        return None
+
+    cutoffs = get_event_tier_cutoffs(
+        previous_event
+    )
+
+    final_scores = {
+        tier: cutoff.score
+        for tier, cutoff in cutoffs.items()
+    }
+
+    return EventSnapshot(
+        event=previous_event,
+        cutoffs=cutoffs,
+        predictions=final_scores,
+        is_active=False,
+    )
+
