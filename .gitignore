@@ -217,4 +217,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-probe_bestdori.py
+probe_*.py
+.playwright-profile/

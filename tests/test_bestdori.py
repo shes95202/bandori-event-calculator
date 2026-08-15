@@ -5,6 +5,8 @@ from bandori_event_calculator.bestdori import (
     find_current_event,
     parse_cutoffs,
     parse_events,
+    get_tracked_tiers,
+    parse_latest_prediction_text,
 )
 
 def test_parse_cutoffs():
@@ -242,3 +244,42 @@ def test_find_current_event_returns_none_when_inactive():
     )
 
     assert result is None
+
+def test_get_tracked_tiers_for_jp():
+    result = get_tracked_tiers(Server.JP)
+
+    assert result == (500, 1000, 2000)
+
+
+def test_get_tracked_tiers_for_tw():
+    result = get_tracked_tiers(Server.TW)
+
+    assert result == (100, 500, 1000)
+    
+def test_parse_latest_prediction_text_chinese():
+    text = """
+    最新分數線      202 1845
+    最新預測        401 2183
+    上次更新時間    7 分鐘前
+    """
+
+    result = parse_latest_prediction_text(text)
+
+    assert result == 4_012_183
+
+def test_parse_latest_prediction_text_english():
+    text = """
+    Current Cutoff    2,021,845
+    Latest Prediction 4,012,183
+    Last Updated      7 minutes ago
+    """
+
+    result = parse_latest_prediction_text(text)
+
+    assert result == 4_012_183
+    
+def test_parse_latest_prediction_text_rejects_missing_prediction():
+    with pytest.raises(ValueError):
+        parse_latest_prediction_text(
+            "Current Cutoff 2,021,845"
+        )
