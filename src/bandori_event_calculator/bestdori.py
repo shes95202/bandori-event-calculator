@@ -1,15 +1,20 @@
+import os
+import re
+import time
+
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any
 from enum import IntEnum
-from playwright.sync_api import sync_playwright
+from pathlib import Path
+from typing import Any
 
 import requests
-import time
-import re
+from playwright.sync_api import sync_playwright
+
 
 BASE_URL = "https://bestdori.com"
 TAIWAN_TZ = timezone(timedelta(hours=8))
+
 
 class Server(IntEnum):
     JP = 0
@@ -18,36 +23,31 @@ class Server(IntEnum):
     CN = 3
     KR = 4
 
+
 TRACKED_TIERS = {
     Server.JP: (500, 1000, 2000),
     Server.TW: (100, 500, 1000),
 }
+
 
 SERVER_SLUGS = {
     Server.JP: "jp",
     Server.TW: "tw",
 }
 
-@dataclass(frozen=True)
-class EventSnapshot:
-    event: Event
-    cutoffs: dict[int, Cutoff]
-    predictions: dict[int, int]
-
-@dataclass(frozen=True)
-class RegressionResult:
-    intercept: float
-    slope: float
-    r_squared: float
 
 @dataclass(frozen=True)
 class Cutoff:
     score: int
     timestamp_ms: int
-    
+
     @property
     def datetime_utc(self) -> datetime:
-        return datetime.fromtimestamp(self.timestamp_ms / 1000, tz=timezone.utc)
+        return datetime.fromtimestamp(
+            self.timestamp_ms / 1000,
+            tz=timezone.utc,
+        )
+
 
 @dataclass(frozen=True)
 class Event:
@@ -71,16 +71,80 @@ class Event:
             self.end_at_ms / 1000,
             tz=timezone.utc,
         )
-        
+
     @property
     def start_datetime_local(self) -> datetime:
-        return self.start_datetime_utc.astimezone(TAIWAN_TZ)
+        return self.start_datetime_utc.astimezone(
+            TAIWAN_TZ
+        )
 
     @property
     def end_datetime_local(self) -> datetime:
-        return self.end_datetime_utc.astimezone(TAIWAN_TZ)
+        return self.end_datetime_utc.astimezone(
+            TAIWAN_TZ
+        )
 
-def fetch_tracker_data(server: Server, event_id: int,tier: int) -> dict[str, Any]:
+
+@dataclass(frozen=True)
+class EventSnapshot:
+    event: Event
+    cutoffs: dict[int, Cutoff]
+    predictions: dict[int, int]
+
+
+@dataclass(frozen=True)
+class RegressionResult:
+    intercept: float
+    slope: float
+    r_squared: float
+
+
+def get_playwright_profile_dir() -> Path:
+    """
+    Return the directory used for the persistent Playwright profile.
+
+    On Windows:
+        %LOCALAPPDATA%/BandoriEventCalculator/playwright-profile
+
+    This prevents the browser profile from appearing next to the
+    application executable.
+    """
+
+    local_app_data = os.getenv(
+        "LOCALAPPDATA"
+    )
+
+    if local_app_data:
+        app_data_dir = (
+            Path(local_app_data)
+            / "BandoriEventCalculator"
+        )
+    else:
+        # Fallback for environments where LOCALAPPDATA
+        # is not available.
+        app_data_dir = (
+            Path.home()
+            / ".bandori-event-calculator"
+        )
+
+    profile_dir = (
+        app_data_dir
+        / "playwright-profile"
+    )
+
+    profile_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return profile_dir
+
+
+def fetch_tracker_data(
+    server: Server,
+    event_id: int,
+    tier: int,
+) -> dict[str, Any]:
     """Fetch raw event tracker data from Bestdori."""
 
     url = f"{BASE_URL}/api/tracker/data"
@@ -101,42 +165,88 @@ def fetch_tracker_data(server: Server, event_id: int,tier: int) -> dict[str, Any
 
     return response.json()
 
-def parse_cutoffs(data: dict[str, Any]) -> list[Cutoff]:
+
+def parse_cutoffs(
+    data: dict[str, Any],
+) -> list[Cutoff]:
     """Convert raw Bestdori tracker data into Cutoff objects."""
-    
+
     if not data.get("result"):
-        raise ValueError("Bestdori returned an unsuccessful result")
-    
-    raw_cutoffs = data.get("cutoffs")
-    
-    if not isinstance(raw_cutoffs, list):
-        raise ValueError("Bestdori response does not contain cutoff data")
-    
-    cutoff = [Cutoff(score=item["ep"], timestamp_ms=item["time"]) for item in raw_cutoffs]
-    
-    return sorted(cutoff, key=lambda cutoff: cutoff.timestamp_ms)
+        raise ValueError(
+            "Bestdori returned an unsuccessful result"
+        )
 
-def fetch_cutoffs(server: Server, event_id: int, tier: int) -> list[Cutoff]:
+    raw_cutoffs = data.get(
+        "cutoffs"
+    )
+
+    if not isinstance(
+        raw_cutoffs,
+        list,
+    ):
+        raise ValueError(
+            "Bestdori response does not contain cutoff data"
+        )
+
+    cutoffs = [
+        Cutoff(
+            score=item["ep"],
+            timestamp_ms=item["time"],
+        )
+        for item in raw_cutoffs
+    ]
+
+    return sorted(
+        cutoffs,
+        key=lambda cutoff: cutoff.timestamp_ms,
+    )
+
+
+def fetch_cutoffs(
+    server: Server,
+    event_id: int,
+    tier: int,
+) -> list[Cutoff]:
     """Fetch and parse cutoff history from Bestdori."""
-    
-    data = fetch_tracker_data(server=server, event_id=event_id, tier=tier)
-    
-    return parse_cutoffs(data)
 
-def get_latest_cutoff(server: Server, event_id: int, tier: int) -> Cutoff:
+    data = fetch_tracker_data(
+        server=server,
+        event_id=event_id,
+        tier=tier,
+    )
+
+    return parse_cutoffs(
+        data
+    )
+
+
+def get_latest_cutoff(
+    server: Server,
+    event_id: int,
+    tier: int,
+) -> Cutoff:
     """Get the most recent cutoff for an event tier."""
-    
-    cutoffs = fetch_cutoffs(server=server, event_id=event_id, tier=tier)
-    
+
+    cutoffs = fetch_cutoffs(
+        server=server,
+        event_id=event_id,
+        tier=tier,
+    )
+
     if not cutoffs:
-        raise ValueError("No cutoff data is available")
+        raise ValueError(
+            "No cutoff data is available"
+        )
 
     return cutoffs[-1]
+
 
 def fetch_events_data() -> dict[str, Any]:
     """Fetch all event data from Bestdori."""
 
-    url = f"{BASE_URL}/api/events/all.5.json"
+    url = (
+        f"{BASE_URL}/api/events/all.5.json"
+    )
 
     response = requests.get(
         url,
@@ -147,33 +257,68 @@ def fetch_events_data() -> dict[str, Any]:
 
     return response.json()
 
-def parse_events(data: dict[str, Any], server: Server) -> list[Event]:
+
+def parse_events(
+    data: dict[str, Any],
+    server: Server,
+) -> list[Event]:
     """Convert raw Bestdori event data into Event objects."""
 
-    events = []
+    events: list[Event] = []
 
     for event_id, item in data.items():
-        names = item.get("eventName")
-        start_times = item.get("startAt")
-        end_times = item.get("endAt")
+        names = item.get(
+            "eventName"
+        )
 
-        if not isinstance(names, list):
+        start_times = item.get(
+            "startAt"
+        )
+
+        end_times = item.get(
+            "endAt"
+        )
+
+        if not isinstance(
+            names,
+            list,
+        ):
             continue
 
-        if not isinstance(start_times, list):
+        if not isinstance(
+            start_times,
+            list,
+        ):
             continue
 
-        if not isinstance(end_times, list):
+        if not isinstance(
+            end_times,
+            list,
+        ):
             continue
 
-        server_index = int(server)
+        server_index = int(
+            server
+        )
 
-        name = names[server_index]
-        start_at = start_times[server_index]
-        end_at = end_times[server_index]
+        name = names[
+            server_index
+        ]
+
+        start_at = start_times[
+            server_index
+        ]
+
+        end_at = end_times[
+            server_index
+        ]
 
         # This event does not exist on this server.
-        if name is None or start_at is None or end_at is None:
+        if (
+            name is None
+            or start_at is None
+            or end_at is None
+        ):
             continue
 
         events.append(
@@ -192,7 +337,12 @@ def parse_events(data: dict[str, Any], server: Server) -> list[Event]:
         key=lambda event: event.start_at_ms,
     )
 
-def find_current_event(data: dict[str, Any], server: Server,now_ms: int) -> Event:
+
+def find_current_event(
+    data: dict[str, Any],
+    server: Server,
+    now_ms: int,
+) -> Event | None:
     """Find the currently active event for a server."""
 
     events = parse_events(
@@ -203,7 +353,11 @@ def find_current_event(data: dict[str, Any], server: Server,now_ms: int) -> Even
     active_events = [
         event
         for event in events
-        if event.start_at_ms <= now_ms <= event.end_at_ms
+        if (
+            event.start_at_ms
+            <= now_ms
+            <= event.end_at_ms
+        )
     ]
 
     if not active_events:
@@ -214,12 +368,17 @@ def find_current_event(data: dict[str, Any], server: Server,now_ms: int) -> Even
         key=lambda event: event.start_at_ms,
     )
 
-def get_current_event(server: Server) -> Event | None:
+
+def get_current_event(
+    server: Server,
+) -> Event | None:
     """Fetch and return the currently active event."""
 
     data = fetch_events_data()
 
-    now_ms = int(time.time() * 1000)
+    now_ms = int(
+        time.time() * 1000
+    )
 
     return find_current_event(
         data=data,
@@ -227,26 +386,37 @@ def get_current_event(server: Server) -> Event | None:
         now_ms=now_ms,
     )
 
-def get_tracked_tiers(server: Server) -> tuple[int, ...]:
+
+def get_tracked_tiers(
+    server: Server,
+) -> tuple[int, ...]:
     """Return the tiers tracked by the calculator for a server."""
 
     try:
-        return TRACKED_TIERS[server]
+        return TRACKED_TIERS[
+            server
+        ]
     except KeyError:
         raise ValueError(
             f"Server {server.name} is not supported"
         )
 
-# 已無用
-def get_current_tier_cutoffs(server: Server) -> dict[int, Cutoff] | None:
+
+def get_current_tier_cutoffs(
+    server: Server,
+) -> dict[int, Cutoff] | None:
     """Get the latest tracked tier cutoffs for the current event."""
 
-    event = get_current_event(server)
+    event = get_current_event(
+        server
+    )
 
     if event is None:
         return None
 
-    tiers = get_tracked_tiers(server)
+    tiers = get_tracked_tiers(
+        server
+    )
 
     return {
         tier: get_latest_cutoff(
@@ -257,17 +427,47 @@ def get_current_tier_cutoffs(server: Server) -> dict[int, Cutoff] | None:
         for tier in tiers
     }
 
-def linear_regression(points: list[tuple[float, float]]) -> RegressionResult:
+
+def linear_regression(
+    points: list[
+        tuple[float, float]
+    ],
+) -> RegressionResult:
+    """
+    Perform simple linear regression.
+
+    This function is retained from the earlier Bestdori
+    prediction investigation and is also covered by tests.
+    """
+
     if len(points) < 2:
-        raise ValueError("At least two points are required")
+        raise ValueError(
+            "At least two points are required"
+        )
 
-    count = len(points)
+    count = len(
+        points
+    )
 
-    mean_x = sum(x for x, _ in points) / count
-    mean_y = sum(y for _, y in points) / count
+    mean_x = (
+        sum(
+            x
+            for x, _ in points
+        )
+        / count
+    )
+
+    mean_y = (
+        sum(
+            y
+            for _, y in points
+        )
+        / count
+    )
 
     covariance = sum(
-        (x - mean_x) * (y - mean_y)
+        (x - mean_x)
+        * (y - mean_y)
         for x, y in points
     )
 
@@ -282,27 +482,54 @@ def linear_regression(points: list[tuple[float, float]]) -> RegressionResult:
     )
 
     if variance_x == 0:
-        raise ValueError("Cannot regress points with identical x values")
+        raise ValueError(
+            "Cannot regress points with identical x values"
+        )
 
-    slope = covariance / variance_x
-    intercept = mean_y - slope * mean_x
+    slope = (
+        covariance
+        / variance_x
+    )
+
+    intercept = (
+        mean_y
+        - slope * mean_x
+    )
 
     if variance_y == 0:
         r_squared = 0.0
-    else:
-        std_x = (variance_x / count) ** 0.5
-        std_y = (variance_y / count) ** 0.5
 
-        correlation = slope * std_x / std_y
-        r_squared = correlation ** 2
+    else:
+        std_x = (
+            variance_x
+            / count
+        ) ** 0.5
+
+        std_y = (
+            variance_y
+            / count
+        ) ** 0.5
+
+        correlation = (
+            slope
+            * std_x
+            / std_y
+        )
+
+        r_squared = (
+            correlation ** 2
+        )
 
     return RegressionResult(
         intercept=intercept,
         slope=slope,
         r_squared=r_squared,
     )
-    
-def parse_latest_prediction_text(text: str) -> int:
+
+
+def parse_latest_prediction_text(
+    text: str,
+) -> int:
     """Extract the latest prediction score from rendered Bestdori text."""
 
     labels = (
@@ -314,19 +541,42 @@ def parse_latest_prediction_text(text: str) -> int:
         line = line.strip()
 
         for label in labels:
-            if line.startswith(label):
-                value_text = line[len(label):].strip()
+            if line.startswith(
+                label
+            ):
+                value_text = (
+                    line[
+                        len(label):
+                    ]
+                    .strip()
+                )
 
-                digits = re.sub(r"\D", "", value_text)
+                digits = re.sub(
+                    r"\D",
+                    "",
+                    value_text,
+                )
 
                 if digits:
-                    return int(digits)
+                    return int(
+                        digits
+                    )
 
-    raise ValueError("Latest prediction was not found")
+    raise ValueError(
+        "Latest prediction was not found"
+    )
 
-def get_event_tracker_url(server: Server, tier: int) -> str:
+
+def get_event_tracker_url(
+    server: Server,
+    tier: int,
+) -> str:
+    """Return the Bestdori Event Tracker URL for a server/tier."""
+
     try:
-        server_slug = SERVER_SLUGS[server]
+        server_slug = SERVER_SLUGS[
+            server
+        ]
     except KeyError:
         raise ValueError(
             f"Server {server.name} is not supported"
@@ -337,73 +587,124 @@ def get_event_tracker_url(server: Server, tier: int) -> str:
         f"{server_slug}/t{tier}"
     )
 
-def get_current_predictions(server: Server) -> dict[int, int] | None:
-    """Fetch Latest Prediction values rendered by Bestdori."""
 
-    event = get_current_event(server)
+def get_current_predictions(
+    server: Server,
+) -> dict[int, int] | None:
+    """
+    Fetch Latest Prediction values rendered by Bestdori.
+
+    Chromium profile data is stored inside the user's
+    application-data directory instead of next to the EXE.
+    """
+
+    event = get_current_event(
+        server
+    )
 
     if event is None:
         return None
 
-    tiers = get_tracked_tiers(server)
+    tiers = get_tracked_tiers(
+        server
+    )
 
-    predictions = {}
+    predictions: dict[
+        int,
+        int,
+    ] = {}
+
+    profile_dir = (
+        get_playwright_profile_dir()
+    )
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=".playwright-profile",
-            headless=True,
+        context = (
+            p.chromium.launch_persistent_context(
+                user_data_dir=str(
+                    profile_dir
+                ),
+                headless=True,
+            )
         )
 
-        page = (
-            context.pages[0]
-            if context.pages
-            else context.new_page()
-        )
-
-        for tier in tiers:
-            url = get_event_tracker_url(
-                server=server,
-                tier=tier,
+        try:
+            page = (
+                context.pages[0]
+                if context.pages
+                else context.new_page()
             )
 
-            page.goto(
-                url,
-                wait_until="domcontentloaded",
-                timeout=30_000,
-            )
+            for tier in tiers:
+                url = get_event_tracker_url(
+                    server=server,
+                    tier=tier,
+                )
 
-            page.wait_for_function(
-                """
-                () =>
-                    document.body.innerText.includes("最新預測") ||
-                    document.body.innerText.includes("Latest Prediction")
-                """,
-                timeout=15_000,
-            )
+                page.goto(
+                    url,
+                    wait_until="domcontentloaded",
+                    timeout=30_000,
+                )
 
-            text = page.locator("body").inner_text()
+                page.wait_for_function(
+                    """
+                    () =>
+                        document.body.innerText.includes("最新預測") ||
+                        document.body.innerText.includes("Latest Prediction")
+                    """,
+                    timeout=15_000,
+                )
 
-            predictions[tier] = (
-                parse_latest_prediction_text(text)
-            )
+                text = (
+                    page.locator(
+                        "body"
+                    )
+                    .inner_text()
+                )
 
-        context.close()
+                predictions[
+                    tier
+                ] = (
+                    parse_latest_prediction_text(
+                        text
+                    )
+                )
+
+        finally:
+            context.close()
 
     return predictions
 
-def get_current_event_snapshot(server: Server) -> EventSnapshot | None:
+
+def get_current_event_snapshot(
+    server: Server,
+) -> EventSnapshot | None:
     """Fetch a complete snapshot of the current event."""
 
-    event = get_current_event(server)
+    event = get_current_event(
+        server
+    )
 
     if event is None:
         return None
 
-    cutoffs = get_current_tier_cutoffs(server)
-    predictions = get_current_predictions(server)
+    cutoffs = (
+        get_current_tier_cutoffs(
+            server
+        )
+    )
 
-    if cutoffs is None or predictions is None:
+    predictions = (
+        get_current_predictions(
+            server
+        )
+    )
+
+    if (
+        cutoffs is None
+        or predictions is None
+    ):
         return None
 
     return EventSnapshot(
