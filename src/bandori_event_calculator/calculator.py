@@ -181,3 +181,20 @@ def calculate_challenge(
         total_score_per_cycle=total_score_per_cycle,
         score_from_current_cp=score_from_current_cp,
     )
+
+def calculate_event_progress(
+    start_at_ms: int,
+    end_at_ms: int,
+    now_ms: int,
+) -> float:
+    """Calculate event progress as a value between 0 and 1."""
+
+    if end_at_ms <= start_at_ms:
+        raise ValueError("end_at_ms must be greater than start_at_ms")
+
+    progress = (
+        (now_ms - start_at_ms)
+        / (end_at_ms - start_at_ms)
+    )
+
+    return max(0.0, min(progress, 1.0))
