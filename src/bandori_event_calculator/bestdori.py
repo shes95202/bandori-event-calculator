@@ -29,6 +29,12 @@ SERVER_SLUGS = {
 }
 
 @dataclass(frozen=True)
+class EventSnapshot:
+    event: Event
+    cutoffs: dict[int, Cutoff]
+    predictions: dict[int, int]
+
+@dataclass(frozen=True)
 class RegressionResult:
     intercept: float
     slope: float
@@ -385,3 +391,23 @@ def get_current_predictions(server: Server) -> dict[int, int] | None:
         context.close()
 
     return predictions
+
+def get_current_event_snapshot(server: Server) -> EventSnapshot | None:
+    """Fetch a complete snapshot of the current event."""
+
+    event = get_current_event(server)
+
+    if event is None:
+        return None
+
+    cutoffs = get_current_tier_cutoffs(server)
+    predictions = get_current_predictions(server)
+
+    if cutoffs is None or predictions is None:
+        return None
+
+    return EventSnapshot(
+        event=event,
+        cutoffs=cutoffs,
+        predictions=predictions,
+    )

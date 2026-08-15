@@ -1,4 +1,5 @@
 import pytest
+import bandori_event_calculator.bestdori as bestdori
 
 from bandori_event_calculator.bestdori import (
     Server,
@@ -283,3 +284,74 @@ def test_parse_latest_prediction_text_rejects_missing_prediction():
         parse_latest_prediction_text(
             "Current Cutoff 2,021,845"
         )
+
+def test_get_current_event_snapshot(monkeypatch):
+    event = bestdori.Event(
+        id=339,
+        server=bestdori.Server.JP,
+        name="parallel in the mirror",
+        event_type="mission_live",
+        start_at_ms=1000,
+        end_at_ms=2000,
+    )
+
+    cutoffs = {
+        500: bestdori.Cutoff(
+            score=2_000_000,
+            timestamp_ms=1500,
+        ),
+        1000: bestdori.Cutoff(
+            score=1_500_000,
+            timestamp_ms=1500,
+        ),
+        2000: bestdori.Cutoff(
+            score=1_000_000,
+            timestamp_ms=1500,
+        ),
+    }
+
+    predictions = {
+        500: 4_000_000,
+        1000: 3_500_000,
+        2000: 2_300_000,
+    }
+
+    monkeypatch.setattr(
+        bestdori,
+        "get_current_event",
+        lambda server: event,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "get_current_tier_cutoffs",
+        lambda server: cutoffs,
+    )
+
+    monkeypatch.setattr(
+        bestdori,
+        "get_current_predictions",
+        lambda server: predictions,
+    )
+
+    result = bestdori.get_current_event_snapshot(
+        bestdori.Server.JP
+    )
+
+    assert result is not None
+    assert result.event == event
+    assert result.cutoffs == cutoffs
+    assert result.predictions == predictions
+
+def test_get_current_event_snapshot_returns_none_when_inactive(monkeypatch):
+    monkeypatch.setattr(
+        bestdori,
+        "get_current_event",
+        lambda server: None,
+    )
+
+    result = bestdori.get_current_event_snapshot(
+        bestdori.Server.TW
+    )
+
+    assert result is None
