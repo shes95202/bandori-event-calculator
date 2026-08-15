@@ -219,3 +219,5 @@ __marimo__/
 
 probe_*.py
 .playwright-profile/
+settings.json
+settings.json.tmp

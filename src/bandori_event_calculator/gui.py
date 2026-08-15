@@ -1,7 +1,9 @@
+import json
 import sys
 
+from pathlib import Path
+
 from PySide6.QtCore import (
-    QSettings,
     QThread,
     QTimer,
     Signal,
@@ -39,6 +41,67 @@ from bandori_event_calculator.state import (
 )
 
 
+# =============================================================
+# Application paths
+# =============================================================
+
+
+def get_application_directory() -> Path:
+    """
+    Return the directory containing the application.
+
+    Development:
+        D:/bandori-event-calculator/
+
+    PyInstaller:
+        directory containing BandoriEventCalculator.exe
+
+    For a PyInstaller --onefile build, __file__ points to the
+    temporary extraction directory, so sys.executable must be
+    used instead.
+    """
+
+    if getattr(
+        sys,
+        "frozen",
+        False,
+    ):
+        return Path(
+            sys.executable
+        ).resolve().parent
+
+    # gui.py:
+    # repository/
+    # └── src/
+    #     └── bandori_event_calculator/
+    #         └── gui.py
+    return (
+        Path(__file__)
+        .resolve()
+        .parents[2]
+    )
+
+
+def get_settings_path() -> Path:
+    """
+    Return the shared settings.json path.
+
+    This file is intentionally placed next to the EXE so that
+    services such as Synology Drive can synchronize it across
+    computers.
+    """
+
+    return (
+        get_application_directory()
+        / "settings.json"
+    )
+
+
+# =============================================================
+# Bestdori background refresh
+# =============================================================
+
+
 class BestdoriRefreshThread(QThread):
     """
     Fetch JP and TW Bestdori data in the background.
@@ -47,7 +110,10 @@ class BestdoriRefreshThread(QThread):
     Switching servers does not trigger another fetch.
     """
 
-    loaded = Signal(object, object)
+    loaded = Signal(
+        object,
+        object,
+    )
 
     def run(self) -> None:
         snapshots: dict[
@@ -82,12 +148,17 @@ class BestdoriRefreshThread(QThread):
         )
 
 
+# =============================================================
+# Target card
+# =============================================================
+
+
 class TargetCard(QGroupBox):
     """
     Display one ranking or pace target.
 
-    Ranking targets and pace benchmarks use exactly
-    the same visual structure.
+    Ranking targets and pace benchmarks use the same
+    visual structure.
     """
 
     def __init__(
@@ -394,6 +465,11 @@ class TargetCard(QGroupBox):
         return "剛好達標"
 
 
+# =============================================================
+# Main window
+# =============================================================
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -419,15 +495,11 @@ class MainWindow(QMainWindow):
         ]
 
         # -----------------------------------------------------
-        # Persistent user settings
-        #
-        # On Windows, QSettings uses the native settings
-        # storage for the current user.
+        # Shared JSON settings
         # -----------------------------------------------------
 
-        self.settings = QSettings(
-            "BandoriEventCalculator",
-            "BandoriEventCalculator",
+        self.settings_path = (
+            get_settings_path()
         )
 
         self._load_settings()
@@ -471,15 +543,11 @@ class MainWindow(QMainWindow):
 
         self._clear_event_display()
 
-        # Restore the previously saved JP values into the
-        # currently visible input fields.
+        # Restore saved JP values into visible input fields.
         self._sync_inputs_from_state()
 
         # -----------------------------------------------------
-        # Recalculate locally once per minute.
-        #
-        # This updates event progress and expected scores,
-        # but NEVER fetches Bestdori.
+        # Local recalculation timer
         # -----------------------------------------------------
 
         self.local_timer = QTimer(
@@ -495,7 +563,7 @@ class MainWindow(QMainWindow):
         )
 
         # -----------------------------------------------------
-        # Fetch JP and TW once when application starts.
+        # Fetch JP + TW once when application starts
         # -----------------------------------------------------
 
         QTimer.singleShot(
@@ -504,39 +572,79 @@ class MainWindow(QMainWindow):
         )
 
     # =========================================================
-    # Persistent settings
+    # JSON settings
     # =========================================================
 
     def _load_settings(
         self,
     ) -> None:
         """
-        Restore JP and TW score settings from the previous run.
+        Load JP/TW user inputs from settings.json.
+
+        Missing or malformed settings fall back to zero rather
+        than preventing the application from starting.
         """
+
+        if not self.settings_path.exists():
+            return
+
+        try:
+            with self.settings_path.open(
+                "r",
+                encoding="utf-8",
+            ) as file:
+                data = json.load(
+                    file
+                )
+
+        except (
+            OSError,
+            json.JSONDecodeError,
+        ):
+            return
+
+        if not isinstance(
+            data,
+            dict,
+        ):
+            return
 
         for server in (
             Server.JP,
             Server.TW,
         ):
+            server_data = data.get(
+                server.name,
+                {},
+            )
+
+            if not isinstance(
+                server_data,
+                dict,
+            ):
+                continue
+
+            current_score = (
+                self._safe_nonnegative_int(
+                    server_data.get(
+                        "current_score",
+                        0,
+                    )
+                )
+            )
+
+            average_score = (
+                self._safe_nonnegative_int(
+                    server_data.get(
+                        "average_score",
+                        0,
+                    )
+                )
+            )
+
             state = self.states[
                 server
             ]
-
-            prefix = (
-                server.name.lower()
-            )
-
-            current_score = self.settings.value(
-                f"{prefix}/current_score",
-                0,
-                type=int,
-            )
-
-            average_score = self.settings.value(
-                f"{prefix}/average_score",
-                0,
-                type=int,
-            )
 
             state.current_score = (
                 current_score
@@ -546,41 +654,95 @@ class MainWindow(QMainWindow):
                 average_score
             )
 
-    def _save_current_score(
+    def _save_settings(
         self,
     ) -> None:
         """
-        Save the current server's current score.
+        Save JP/TW inputs into settings.json.
+
+        A temporary file is written first and then replaced to
+        reduce the chance of leaving a partially written JSON
+        file if the application is interrupted during saving.
         """
 
-        prefix = (
-            self.state.server.name.lower()
+        data = {
+            server.name: {
+                "current_score": (
+                    state.current_score
+                ),
+                "average_score": (
+                    state.average_score
+                ),
+            }
+            for server, state
+            in self.states.items()
+        }
+
+        temporary_path = (
+            self.settings_path.with_suffix(
+                ".json.tmp"
+            )
         )
 
-        self.settings.setValue(
-            f"{prefix}/current_score",
-            self.state.current_score,
-        )
+        try:
+            self.settings_path.parent.mkdir(
+                parents=True,
+                exist_ok=True,
+            )
 
-        self.settings.sync()
+            with temporary_path.open(
+                "w",
+                encoding="utf-8",
+            ) as file:
+                json.dump(
+                    data,
+                    file,
+                    ensure_ascii=False,
+                    indent=4,
+                )
 
-    def _save_average_score(
-        self,
-    ) -> None:
+                file.write(
+                    "\n"
+                )
+
+            temporary_path.replace(
+                self.settings_path
+            )
+
+        except OSError:
+            # Saving settings should never crash the calculator.
+            #
+            # For example, Synology Drive may temporarily lock a
+            # file while synchronizing it.
+            try:
+                if temporary_path.exists():
+                    temporary_path.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _safe_nonnegative_int(
+        value: object,
+    ) -> int:
         """
-        Save the current server's average score.
+        Convert a JSON value to a non-negative integer.
+        Invalid values become zero.
         """
 
-        prefix = (
-            self.state.server.name.lower()
-        )
+        try:
+            result = int(
+                value
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            return 0
 
-        self.settings.setValue(
-            f"{prefix}/average_score",
-            self.state.average_score,
+        return max(
+            result,
+            0,
         )
-
-        self.settings.sync()
 
     # =========================================================
     # Theme
@@ -590,7 +752,7 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """
-        Apply a light sky-blue theme.
+        Apply the light sky-blue theme.
         """
 
         self.setStyleSheet(
@@ -1215,7 +1377,7 @@ class MainWindow(QMainWindow):
         self,
     ) -> None:
         """
-        Restore the saved score settings for this server.
+        Restore saved values for the selected server.
         """
 
         self.current_score_edit.blockSignals(
@@ -1463,9 +1625,8 @@ class MainWindow(QMainWindow):
             score
         )
 
-        # Save immediately so that even an unexpected exit
-        # does not lose the latest value.
-        self._save_current_score()
+        # Save both JP and TW states immediately.
+        self._save_settings()
 
         self._update_calculation_display()
 
@@ -1486,7 +1647,7 @@ class MainWindow(QMainWindow):
             score
         )
 
-        self._save_average_score()
+        self._save_settings()
 
         self._update_calculation_display()
 
@@ -1710,6 +1871,11 @@ class MainWindow(QMainWindow):
         self.refresh_status_label.clear()
 
         self._clear_calculation_display()
+
+
+# =============================================================
+# Entry point
+# =============================================================
 
 
 def main() -> None:
