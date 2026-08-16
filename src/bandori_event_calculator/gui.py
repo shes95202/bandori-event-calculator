@@ -38,6 +38,7 @@ from bandori_event_calculator.bestdori import (
     EventSnapshot,
     Server,
     get_display_event_snapshot,
+    get_tracked_tiers,
 )
 from bandori_event_calculator.calculator import (
     TargetCalculation,
@@ -669,35 +670,122 @@ class TargetCard(QGroupBox):
     # Normal ranking target
     # =========================================================
 
+    @staticmethod
+    def _format_optional_score(
+        value: int | None,
+    ) -> str:
+        if value is None:
+            return "等待資料"
+
+        return f"{value:,}"
+
+    @staticmethod
+    def _waiting_suffix(
+        current_cutoff: int | None,
+        predicted_score: int | None,
+    ) -> str:
+        missing: list[str] = []
+
+        if current_cutoff is None:
+            missing.append("分數線")
+
+        if predicted_score is None:
+            missing.append("預測")
+
+        if not missing:
+            return ""
+
+        return (
+            "  |  等待 Bestdori "
+            + " / ".join(missing)
+        )
+
+    def _clear_prediction_dependent_values(
+        self,
+    ) -> None:
+        """Clear values that cannot be calculated without a prediction."""
+
+        self.expected_score_value.setText(
+            "—"
+        )
+
+        self.status_value.setText(
+            "—"
+        )
+
+        self.remaining_score_value.setText(
+            "—"
+        )
+
+        self.required_games_value.setText(
+            "—"
+        )
+
+        self.required_boosts_value.setText(
+            "—"
+        )
+
+        self.required_refills_value.setText(
+            "—"
+        )
+
+        self.required_stars_value.setText(
+            "—"
+        )
+
+        self.required_hours_value.setText(
+            "—"
+        )
+
+    # =========================================================
+    # Normal ranking target
+    # =========================================================
+
     def update_target(
         self,
         title: str,
-        current_cutoff: int,
-        predicted_score: int,
-        expected_score: int,
-        score_gap: int,
-        calculation: TargetCalculation,
+        current_cutoff: int | None,
+        predicted_score: int | None,
+        expected_score: int | None,
+        score_gap: int | None,
+        calculation: TargetCalculation | None,
     ) -> None:
         """
         Update a normal ranking target.
 
-        Ranking targets intentionally retain the original
-        requirement-oriented display.
+        Bestdori can publish cutoff and prediction values at different times.
+        Show whichever value already exists instead of hiding the whole tier.
         """
 
         self._set_default_requirement_labels()
 
         self.setTitle(
             title
+            + self._waiting_suffix(
+                current_cutoff=current_cutoff,
+                predicted_score=predicted_score,
+            )
         )
 
         self.current_cutoff_value.setText(
-            f"{current_cutoff:,}"
+            self._format_optional_score(
+                current_cutoff
+            )
         )
 
         self.predicted_score_value.setText(
-            f"{predicted_score:,}"
+            self._format_optional_score(
+                predicted_score
+            )
         )
+
+        if (
+            expected_score is None
+            or score_gap is None
+            or calculation is None
+        ):
+            self._clear_prediction_dependent_values()
+            return
 
         self.expected_score_value.setText(
             f"{expected_score:,}"
@@ -740,31 +828,48 @@ class TargetCard(QGroupBox):
     def update_benchmark_target(
         self,
         title: str,
-        current_cutoff: int,
-        predicted_score: int,
-        expected_score: int,
-        score_gap: int,
-        calculation: TargetCalculation,
+        current_cutoff: int | None,
+        predicted_score: int | None,
+        expected_score: int | None,
+        score_gap: int | None,
+        calculation: TargetCalculation | None,
         average_score: int,
     ) -> None:
         """
-        Update a pace benchmark.
+        Update a pace benchmark while supporting partial Bestdori data.
 
-        Pace Buffer is:
-
-            (current_score - expected_score) / average_score
-
-        Since score_gap is:
-
-            expected_score - current_score
-
-        this is equivalent to:
-
-            -score_gap / average_score
-
-        Positive = ahead.
-        Negative = behind.
+        The benchmark cutoff can be displayed as soon as all cutoff inputs
+        exist, even if one of the required predictions has not appeared yet.
         """
+
+        waiting_suffix = self._waiting_suffix(
+            current_cutoff=current_cutoff,
+            predicted_score=predicted_score,
+        )
+
+        self.current_cutoff_value.setText(
+            self._format_optional_score(
+                current_cutoff
+            )
+        )
+
+        self.predicted_score_value.setText(
+            self._format_optional_score(
+                predicted_score
+            )
+        )
+
+        if (
+            expected_score is None
+            or score_gap is None
+            or calculation is None
+        ):
+            self._set_default_requirement_labels()
+            self.setTitle(
+                title + waiting_suffix
+            )
+            self._clear_prediction_dependent_values()
+            return
 
         if average_score > 0:
             pace_buffer_games = (
@@ -783,14 +888,7 @@ class TargetCard(QGroupBox):
         self.setTitle(
             f"{title}  |  "
             f"Pace Buffer {pace_buffer_text} 場"
-        )
-
-        self.current_cutoff_value.setText(
-            f"{current_cutoff:,}"
-        )
-
-        self.predicted_score_value.setText(
-            f"{predicted_score:,}"
+            f"{waiting_suffix}"
         )
 
         self.expected_score_value.setText(
@@ -805,8 +903,6 @@ class TargetCard(QGroupBox):
 
         # -----------------------------------------------------
         # Behind or exactly on pace
-        #
-        # Keep the original resource requirement display.
         # -----------------------------------------------------
 
         if score_gap >= 0:
@@ -840,9 +936,6 @@ class TargetCard(QGroupBox):
 
         # -----------------------------------------------------
         # Ahead of pace
-        #
-        # Instead of a row of zero requirements, show how much
-        # buffer the player currently has.
         # -----------------------------------------------------
 
         self._set_ahead_buffer_labels()
@@ -877,8 +970,6 @@ class TargetCard(QGroupBox):
             f"{boost_buffer:.1f} 火"
         )
 
-        # Negative refill/star requirements do not have a useful
-        # real-world meaning, so show that no refill is required.
         self.required_refills_value.setText(
             "不需要"
         )
@@ -2213,17 +2304,23 @@ class MainWindow(QMainWindow):
             event_detail += "  |  已結束"
         else:
             expected_tiers = set(
-                (500, 1000, 2000)
-                if self.state.server == Server.JP
-                else (100, 500, 1000)
+                get_tracked_tiers(
+                    self.state.server
+                )
             )
 
-            available_tiers = (
+            # A tracked tier is complete only after both its cutoff and
+            # prediction are available. Bestdori may publish tracked tiers
+            # progressively on any server, so partial data is still shown
+            # while the event header indicates that more data is pending.
+            complete_tiers = (
                 set(snapshot.cutoffs)
                 & set(snapshot.predictions)
             )
 
-            if available_tiers != expected_tiers:
+            if not expected_tiers.issubset(
+                complete_tiers
+            ):
                 event_detail += "  |  Bestdori 資料等待中"
 
         self.event_detail_label.setText(
@@ -2601,18 +2698,9 @@ class MainWindow(QMainWindow):
         # Ranking cards
         # -----------------------------------------------------
 
-        if self.state.server == Server.JP:
-            ranking_tiers = (
-                500,
-                1000,
-                2000,
-            )
-        else:
-            ranking_tiers = (
-                100,
-                500,
-                1000,
-            )
+        ranking_tiers = get_tracked_tiers(
+            self.state.server
+        )
 
         for card, tier in zip(
             self.ranking_cards,

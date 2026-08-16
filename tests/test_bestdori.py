@@ -551,27 +551,46 @@ def test_get_display_event_snapshot_uses_current_event(monkeypatch):
     assert result.is_active is True
 
 
-def test_get_event_tier_cutoffs_skips_tiers_without_data(monkeypatch):
+@pytest.mark.parametrize(
+    ("server", "available", "expected_tiers"),
+    [
+        (
+            bestdori.Server.TW,
+            {
+                100: [bestdori.Cutoff(234_567, 2_000)],
+                500: [bestdori.Cutoff(123_456, 2_000)],
+                1000: [],
+            },
+            [100, 500],
+        ),
+        (
+            bestdori.Server.JP,
+            {
+                500: [bestdori.Cutoff(345_678, 2_000)],
+                1000: [bestdori.Cutoff(234_567, 2_000)],
+                2000: [],
+            },
+            [500, 1000],
+        ),
+    ],
+)
+def test_get_event_tier_cutoffs_keeps_available_tiers_when_later_tier_is_missing(
+    monkeypatch,
+    server,
+    available,
+    expected_tiers,
+):
     event = bestdori.Event(
         id=324,
-        server=bestdori.Server.TW,
-        name="New TW Event",
+        server=server,
+        name="New Event",
         event_type="mission_live",
         start_at_ms=1_000,
         end_at_ms=10_000,
     )
 
-    available = {
-        100: [],
-        500: [
-            bestdori.Cutoff(
-                score=123_456,
-                timestamp_ms=2_000,
-            )
-        ],
-        1000: [],
-    }
-
+    # Bestdori can publish tracked ranking tiers progressively on any server.
+    # A missing later/lower tier must not discard earlier available data.
     monkeypatch.setattr(
         bestdori,
         "fetch_cutoffs",
@@ -580,5 +599,6 @@ def test_get_event_tier_cutoffs_skips_tiers_without_data(monkeypatch):
 
     result = bestdori.get_event_tier_cutoffs(event)
 
-    assert list(result) == [500]
-    assert result[500].score == 123_456
+    assert list(result) == expected_tiers
+    for tier in expected_tiers:
+        assert result[tier] == available[tier][-1]

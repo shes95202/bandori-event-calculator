@@ -20,21 +20,21 @@ from bandori_event_calculator.calculator import (
 @dataclass(frozen=True)
 class TierResult:
     tier: int
-    current_cutoff: int
-    predicted_score: int
-    expected_score: int
-    score_gap: int
-    calculation: TargetCalculation
+    current_cutoff: int | None
+    predicted_score: int | None
+    expected_score: int | None
+    score_gap: int | None
+    calculation: TargetCalculation | None
 
 
 @dataclass(frozen=True)
 class BenchmarkResult:
     label: str
-    current_cutoff: int
-    predicted_score: int
-    expected_score: int
-    score_gap: int
-    calculation: TargetCalculation
+    current_cutoff: int | None
+    predicted_score: int | None
+    expected_score: int | None
+    score_gap: int | None
+    calculation: TargetCalculation | None
 
 
 @dataclass(frozen=True)
@@ -48,37 +48,92 @@ class EventCalculation:
     benchmarks: dict[str, BenchmarkResult]
 
 
+def _build_partial_target(
+    *,
+    tier: int,
+    current_cutoff: int | None,
+    predicted_score: int | None,
+    current_score: int,
+    average_score: int,
+    progress: float,
+) -> TierResult:
+    """
+    Build one ranking tier while preserving partially available Bestdori data.
+
+    Cutoff and prediction data do not necessarily appear at the same time.
+    Bestdori ranking data can appear progressively on every supported
+    server. Higher-ranked tracked tiers may become available before lower
+    tracked tiers. Keep whichever values already exist instead of hiding the
+    whole tier until both cutoff and prediction are present.
+    """
+
+    if predicted_score is None:
+        expected_score = None
+        score_gap = None
+        calculation = None
+    else:
+        expected_score = calculate_expected_score(
+            target_score=predicted_score,
+            progress=progress,
+        )
+
+        score_gap = calculate_score_gap(
+            expected_score=expected_score,
+            current_score=current_score,
+        )
+
+        calculation = calculate_target(
+            target_score=predicted_score,
+            current_score=current_score,
+            average_score=average_score,
+        )
+
+    return TierResult(
+        tier=tier,
+        current_cutoff=current_cutoff,
+        predicted_score=predicted_score,
+        expected_score=expected_score,
+        score_gap=score_gap,
+        calculation=calculation,
+    )
+
+
 def _build_benchmark(
     label: str,
-    current_cutoff: int,
-    predicted_score: int,
+    current_cutoff: int | None,
+    predicted_score: int | None,
     current_score: int,
     average_score: int,
     progress: float,
 ) -> BenchmarkResult:
     """
-    Build a pace benchmark.
+    Build a pace benchmark while retaining any partial Bestdori data.
 
-    Unlike a normal ranking target, the resource calculation here answers:
-    "How much do I need to play right now to catch up to the expected score
-    at the current event progress?"
+    A benchmark can expose its current cutoff before its prediction exists,
+    or vice versa.  Prediction-dependent calculations are only produced once
+    the prediction is available.
     """
 
-    expected_score = calculate_expected_score(
-        target_score=predicted_score,
-        progress=progress,
-    )
+    if predicted_score is None:
+        expected_score = None
+        score_gap = None
+        calculation = None
+    else:
+        expected_score = calculate_expected_score(
+            target_score=predicted_score,
+            progress=progress,
+        )
 
-    score_gap = calculate_score_gap(
-        expected_score=expected_score,
-        current_score=current_score,
-    )
+        score_gap = calculate_score_gap(
+            expected_score=expected_score,
+            current_score=current_score,
+        )
 
-    calculation = calculate_target(
-        target_score=expected_score,
-        current_score=current_score,
-        average_score=average_score,
-    )
+        calculation = calculate_target(
+            target_score=expected_score,
+            current_score=current_score,
+            average_score=average_score,
+        )
 
     return BenchmarkResult(
         label=label,
@@ -87,6 +142,34 @@ def _build_benchmark(
         expected_score=expected_score,
         score_gap=score_gap,
         calculation=calculation,
+    )
+
+
+def _maybe_average(
+    first: int | None,
+    second: int | None,
+) -> int | None:
+    if first is None or second is None:
+        return None
+
+    return calculate_tier_average(
+        first,
+        second,
+    )
+
+
+def _maybe_quartile(
+    higher_score: int | None,
+    lower_score: int | None,
+    fraction: float,
+) -> int | None:
+    if higher_score is None or lower_score is None:
+        return None
+
+    return calculate_tier_quartile(
+        higher_score=higher_score,
+        lower_score=lower_score,
+        fraction=fraction,
     )
 
 
@@ -113,7 +196,6 @@ def calculate_event(
         now_ms=now_ms,
     )
 
-    # Estimate final score if the user keeps the current pace.
     projected_final_score = (
         calculate_projected_final_score(
             current_score=current_score,
@@ -125,63 +207,46 @@ def calculate_event(
 
     # ---------------------------------------------------------
     # Ranking targets
-    #
-    # These calculations answer:
-    # "How much do I still need to play to reach the FINAL
-    #  predicted score?"
     # ---------------------------------------------------------
 
     tier_results: dict[int, TierResult] = {}
 
-    for tier, predicted_score in snapshot.predictions.items():
+    # Cutoffs and predictions can arrive independently.  Build a result for
+    # every tier for which Bestdori has published at least one of them.
+    available_tiers = (
+        set(snapshot.cutoffs)
+        | set(snapshot.predictions)
+    )
+
+    for tier in sorted(available_tiers):
         cutoff = snapshot.cutoffs.get(tier)
+        predicted_score = snapshot.predictions.get(tier)
 
-        # Bestdori may have a prediction before the first cutoff (or vice
-        # versa) just after an event starts.  Only calculate a tier after
-        # both pieces of data are available.
-        if cutoff is None:
-            continue
-
-        expected_score = calculate_expected_score(
-            target_score=predicted_score,
-            progress=progress,
-        )
-
-        score_gap = calculate_score_gap(
-            expected_score=expected_score,
-            current_score=current_score,
-        )
-
-        calculation = calculate_target(
-            target_score=predicted_score,
+        tier_results[tier] = _build_partial_target(
+            tier=tier,
+            current_cutoff=(
+                cutoff.score
+                if cutoff is not None
+                else None
+            ),
+            predicted_score=predicted_score,
             current_score=current_score,
             average_score=average_score,
-        )
-
-        tier_results[tier] = TierResult(
-            tier=tier,
-            current_cutoff=cutoff.score,
-            predicted_score=predicted_score,
-            expected_score=expected_score,
-            score_gap=score_gap,
-            calculation=calculation,
+            progress=progress,
         )
 
     # ---------------------------------------------------------
     # Pace / interval benchmarks
-    #
-    # These calculations answer:
-    # "How much do I need to play RIGHT NOW to catch up
-    #  to the expected score at the current progress?"
     # ---------------------------------------------------------
 
     benchmarks: dict[str, BenchmarkResult] = {}
 
     if event.server == Server.JP:
-        # JP: T2000 benchmark can be shown as soon as T2000 is ready.
-        if 2000 in tier_results:
-            t2000 = tier_results[2000]
+        t500 = tier_results.get(500)
+        t1000 = tier_results.get(1000)
+        t2000 = tier_results.get(2000)
 
+        if t2000 is not None:
             benchmarks["t2000"] = _build_benchmark(
                 label="T2000",
                 current_cutoff=t2000.current_cutoff,
@@ -191,18 +256,36 @@ def calculate_event(
                 progress=progress,
             )
 
-        # JP: the average benchmark needs both T500 and T1000.
-        if 500 in tier_results and 1000 in tier_results:
-            average_current_cutoff = calculate_tier_average(
-                tier_results[500].current_cutoff,
-                tier_results[1000].current_cutoff,
-            )
+        average_current_cutoff = _maybe_average(
+            (
+                t500.current_cutoff
+                if t500 is not None
+                else None
+            ),
+            (
+                t1000.current_cutoff
+                if t1000 is not None
+                else None
+            ),
+        )
 
-            average_predicted_score = calculate_tier_average(
-                tier_results[500].predicted_score,
-                tier_results[1000].predicted_score,
-            )
+        average_predicted_score = _maybe_average(
+            (
+                t500.predicted_score
+                if t500 is not None
+                else None
+            ),
+            (
+                t1000.predicted_score
+                if t1000 is not None
+                else None
+            ),
+        )
 
+        if (
+            average_current_cutoff is not None
+            or average_predicted_score is not None
+        ):
             benchmarks["t500_t1000_average"] = _build_benchmark(
                 label="T500-T1000 平均",
                 current_cutoff=average_current_cutoff,
@@ -213,20 +296,42 @@ def calculate_event(
             )
 
     elif event.server == Server.TW:
-        # Both TW pace benchmarks depend on T100 and T500.  If either tier
-        # has not appeared on Bestdori yet, leave the benchmark pending
-        # instead of failing the whole event.
-        if 100 in tier_results and 500 in tier_results:
-            average_current_cutoff = calculate_tier_average(
-                tier_results[100].current_cutoff,
-                tier_results[500].current_cutoff,
-            )
+        t100 = tier_results.get(100)
+        t500 = tier_results.get(500)
 
-            average_predicted_score = calculate_tier_average(
-                tier_results[100].predicted_score,
-                tier_results[500].predicted_score,
-            )
+        # Ranking data can appear progressively. These TW pace benchmarks
+        # depend only on T100 and T500, so a missing T1000 must never block
+        # data that is already available for their actual dependencies.
+        average_current_cutoff = _maybe_average(
+            (
+                t100.current_cutoff
+                if t100 is not None
+                else None
+            ),
+            (
+                t500.current_cutoff
+                if t500 is not None
+                else None
+            ),
+        )
 
+        average_predicted_score = _maybe_average(
+            (
+                t100.predicted_score
+                if t100 is not None
+                else None
+            ),
+            (
+                t500.predicted_score
+                if t500 is not None
+                else None
+            ),
+        )
+
+        if (
+            average_current_cutoff is not None
+            or average_predicted_score is not None
+        ):
             benchmarks["t100_t500_average"] = _build_benchmark(
                 label="T100-T500 平均",
                 current_cutoff=average_current_cutoff,
@@ -236,18 +341,38 @@ def calculate_event(
                 progress=progress,
             )
 
-            q1_current_cutoff = calculate_tier_quartile(
-                higher_score=tier_results[100].current_cutoff,
-                lower_score=tier_results[500].current_cutoff,
-                fraction=0.25,
-            )
+        q1_current_cutoff = _maybe_quartile(
+            higher_score=(
+                t100.current_cutoff
+                if t100 is not None
+                else None
+            ),
+            lower_score=(
+                t500.current_cutoff
+                if t500 is not None
+                else None
+            ),
+            fraction=0.25,
+        )
 
-            q1_predicted_score = calculate_tier_quartile(
-                higher_score=tier_results[100].predicted_score,
-                lower_score=tier_results[500].predicted_score,
-                fraction=0.25,
-            )
+        q1_predicted_score = _maybe_quartile(
+            higher_score=(
+                t100.predicted_score
+                if t100 is not None
+                else None
+            ),
+            lower_score=(
+                t500.predicted_score
+                if t500 is not None
+                else None
+            ),
+            fraction=0.25,
+        )
 
+        if (
+            q1_current_cutoff is not None
+            or q1_predicted_score is not None
+        ):
             benchmarks["t100_t500_q1"] = _build_benchmark(
                 label="T100-T500 Q1",
                 current_cutoff=q1_current_cutoff,

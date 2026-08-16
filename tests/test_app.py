@@ -249,14 +249,24 @@ def test_calculate_event_tolerates_temporarily_missing_tier_data():
         now_ms=1_000,
     )
 
-    # T100 is skipped until its first cutoff appears, but the available
-    # T500 calculation and the event-level progress remain usable.
-    assert 100 not in result.tiers
-    assert result.tiers[500].current_cutoff == 120_000
+    # Cutoff and prediction availability are independent.  Keep T100's
+    # prediction calculation even though its first cutoff has not appeared.
+    t100 = result.tiers[100]
+    assert t100.current_cutoff is None
+    assert t100.predicted_score == 1_000_000
+    assert t100.calculation is not None
+
+    t500 = result.tiers[500]
+    assert t500.current_cutoff == 120_000
+    assert t500.predicted_score == 600_000
     assert result.progress == pytest.approx(0.1)
 
-    # TW pace benchmarks require both T100 and T500, so they stay pending.
-    assert result.benchmarks == {}
+    # Since both predictions exist, the TW pace benchmark is usable even
+    # though the averaged current cutoff is still waiting for T100 cutoff.
+    average = result.benchmarks["t100_t500_average"]
+    assert average.current_cutoff is None
+    assert average.predicted_score == 800_000
+    assert average.calculation is not None
 
 
 def test_calculate_event_works_before_bestdori_has_any_tier_data():
@@ -286,3 +296,280 @@ def test_calculate_event_works_before_bestdori_has_any_tier_data():
     assert result.projected_final_score == 1_000_000
     assert result.tiers == {}
     assert result.benchmarks == {}
+
+
+def test_tw_t100_cutoff_is_kept_before_prediction_and_lower_tiers():
+    event = Event(
+        id=324,
+        server=Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            100: Cutoff(
+                score=250_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={},
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    t100 = result.tiers[100]
+    assert t100.current_cutoff == 250_000
+    assert t100.predicted_score is None
+    assert t100.expected_score is None
+    assert t100.calculation is None
+
+    assert 500 not in result.tiers
+    assert 1000 not in result.tiers
+    assert result.benchmarks == {}
+
+
+def test_tw_t100_and_t500_cutoffs_build_partial_benchmarks_before_predictions():
+    event = Event(
+        id=324,
+        server=Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            100: Cutoff(
+                score=300_000,
+                timestamp_ms=1_000,
+            ),
+            500: Cutoff(
+                score=100_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={
+            100: 1_000_000,
+        },
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    assert result.tiers[100].predicted_score == 1_000_000
+    assert result.tiers[100].calculation is not None
+
+    assert result.tiers[500].current_cutoff == 100_000
+    assert result.tiers[500].predicted_score is None
+    assert result.tiers[500].calculation is None
+
+    average = result.benchmarks["t100_t500_average"]
+    assert average.current_cutoff == 200_000
+    assert average.predicted_score is None
+    assert average.calculation is None
+
+    q1 = result.benchmarks["t100_t500_q1"]
+    assert q1.current_cutoff == 150_000
+    assert q1.predicted_score is None
+    assert q1.calculation is None
+
+
+def test_tw_t1000_missing_does_not_block_t100_t500_or_benchmarks():
+    event = Event(
+        id=324,
+        server=Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            100: Cutoff(
+                score=300_000,
+                timestamp_ms=1_000,
+            ),
+            500: Cutoff(
+                score=100_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={
+            100: 1_000_000,
+            500: 600_000,
+        },
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    assert result.tiers[100].calculation is not None
+    assert result.tiers[500].calculation is not None
+    assert 1000 not in result.tiers
+
+    average = result.benchmarks["t100_t500_average"]
+    assert average.current_cutoff == 200_000
+    assert average.predicted_score == 800_000
+    assert average.calculation is not None
+
+    q1 = result.benchmarks["t100_t500_q1"]
+    assert q1.current_cutoff == 150_000
+    assert q1.predicted_score == 700_000
+    assert q1.calculation is not None
+
+
+
+def test_jp_t500_cutoff_is_kept_before_prediction_and_lower_tiers():
+    event = Event(
+        id=340,
+        server=Server.JP,
+        name="New JP Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            500: Cutoff(
+                score=350_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={},
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    t500 = result.tiers[500]
+    assert t500.current_cutoff == 350_000
+    assert t500.predicted_score is None
+    assert t500.expected_score is None
+    assert t500.calculation is None
+
+    assert 1000 not in result.tiers
+    assert 2000 not in result.tiers
+    assert result.benchmarks == {}
+
+
+def test_jp_t500_and_t1000_partial_data_builds_only_available_benchmark_parts():
+    event = Event(
+        id=340,
+        server=Server.JP,
+        name="New JP Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            500: Cutoff(
+                score=400_000,
+                timestamp_ms=1_000,
+            ),
+            1000: Cutoff(
+                score=200_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={
+            500: 1_200_000,
+        },
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    assert result.tiers[500].predicted_score == 1_200_000
+    assert result.tiers[500].calculation is not None
+
+    assert result.tiers[1000].current_cutoff == 200_000
+    assert result.tiers[1000].predicted_score is None
+    assert result.tiers[1000].calculation is None
+
+    average = result.benchmarks["t500_t1000_average"]
+    assert average.current_cutoff == 300_000
+    assert average.predicted_score is None
+    assert average.calculation is None
+
+    assert "t2000" not in result.benchmarks
+
+
+def test_jp_t2000_missing_does_not_block_t500_t1000_or_average_benchmark():
+    event = Event(
+        id=340,
+        server=Server.JP,
+        name="New JP Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            500: Cutoff(
+                score=400_000,
+                timestamp_ms=1_000,
+            ),
+            1000: Cutoff(
+                score=200_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={
+            500: 1_200_000,
+            1000: 800_000,
+        },
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    assert result.tiers[500].calculation is not None
+    assert result.tiers[1000].calculation is not None
+    assert 2000 not in result.tiers
+
+    average = result.benchmarks["t500_t1000_average"]
+    assert average.current_cutoff == 300_000
+    assert average.predicted_score == 1_000_000
+    assert average.calculation is not None
+
+    assert "t2000" not in result.benchmarks
