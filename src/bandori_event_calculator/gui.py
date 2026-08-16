@@ -1582,7 +1582,11 @@ class MainWindow(QMainWindow):
         )
 
         self.current_score_edit.setPlaceholderText(
-            "例如：1,260,000"
+            "輸入後按 Enter"
+        )
+
+        self.current_score_edit.setToolTip(
+            "輸入新的目前分數後按 Enter 套用"
         )
 
         self.average_score_edit = (
@@ -1590,8 +1594,51 @@ class MainWindow(QMainWindow):
         )
 
         self.average_score_edit.setPlaceholderText(
-            "例如：20,235"
+            "輸入後按 Enter"
         )
+
+        self.average_score_edit.setToolTip(
+            "輸入新的一場平均分數後按 Enter 套用"
+        )
+
+        # The QLineEdit fields are only temporary entry boxes.
+        # The committed values are shown separately on the right so
+        # the fields can be cleared after Enter without losing sight
+        # of the values currently used by the calculator.
+        self.current_score_value_label = QLabel(
+            "—"
+        )
+
+        self.average_score_value_label = QLabel(
+            "—"
+        )
+
+        for label in (
+            self.current_score_value_label,
+            self.average_score_value_label,
+        ):
+            font = label.font()
+            font.setBold(
+                True
+            )
+            label.setFont(
+                font
+            )
+            label.setAlignment(
+                Qt.AlignmentFlag.AlignRight
+                | Qt.AlignmentFlag.AlignVCenter
+            )
+            label.setStyleSheet(
+                """
+                color: #145B86;
+                """
+            )
+            label.setMinimumWidth(
+                110
+            )
+            label.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+            )
 
         input_layout.addWidget(
             QLabel(
@@ -1608,6 +1655,12 @@ class MainWindow(QMainWindow):
         )
 
         input_layout.addWidget(
+            self.current_score_value_label,
+            0,
+            2,
+        )
+
+        input_layout.addWidget(
             QLabel(
                 "一場平均分數："
             ),
@@ -1617,6 +1670,17 @@ class MainWindow(QMainWindow):
 
         input_layout.addWidget(
             self.average_score_edit,
+            1,
+            1,
+        )
+
+        input_layout.addWidget(
+            self.average_score_value_label,
+            1,
+            2,
+        )
+
+        input_layout.setColumnStretch(
             1,
             1,
         )
@@ -1924,12 +1988,12 @@ class MainWindow(QMainWindow):
             self.refresh_bestdori
         )
 
-        self.current_score_edit.textChanged.connect(
-            self._current_score_changed
+        self.current_score_edit.returnPressed.connect(
+            self._current_score_submitted
         )
 
-        self.average_score_edit.textChanged.connect(
-            self._average_score_changed
+        self.average_score_edit.returnPressed.connect(
+            self._average_score_submitted
         )
 
     # =========================================================
@@ -1960,36 +2024,32 @@ class MainWindow(QMainWindow):
     def _sync_inputs_from_state(
         self,
     ) -> None:
-        self.current_score_edit.blockSignals(
-            True
+        """
+        Show the committed values and keep both entry boxes empty.
+
+        The QLineEdit widgets are intentionally used as temporary
+        input fields only.  This also makes JP/TW switching clearer:
+        the value on the right is the value currently applied to the
+        selected server, while the box on the left is always ready for
+        a new value.
+        """
+
+        self.current_score_edit.clear()
+        self.average_score_edit.clear()
+
+        self._update_committed_value_labels()
+
+    def _update_committed_value_labels(
+        self,
+    ) -> None:
+        """Update the values shown to the right of the entry boxes."""
+
+        self.current_score_value_label.setText(
+            f"{self.state.current_score:,}"
         )
 
-        self.average_score_edit.blockSignals(
-            True
-        )
-
-        if self.state.current_score > 0:
-            self.current_score_edit.setText(
-                f"{self.state.current_score:,}"
-            )
-
-        else:
-            self.current_score_edit.clear()
-
-        if self.state.average_score > 0:
-            self.average_score_edit.setText(
-                f"{self.state.average_score:,}"
-            )
-
-        else:
-            self.average_score_edit.clear()
-
-        self.current_score_edit.blockSignals(
-            False
-        )
-
-        self.average_score_edit.blockSignals(
-            False
+        self.average_score_value_label.setText(
+            f"{self.state.average_score:,}"
         )
 
     # =========================================================
@@ -2296,10 +2356,20 @@ class MainWindow(QMainWindow):
             cleaned
         )
 
-    def _current_score_changed(
+    def _current_score_submitted(
         self,
-        text: str,
     ) -> None:
+        """Apply the current-score entry only when Enter is pressed."""
+
+        text = self.current_score_edit.text()
+
+        # The field is cleared after a successful submission and focus
+        # stays here.  Ignore another Enter on the empty field so the
+        # committed score is not accidentally reset to zero.
+        if not text.strip():
+            self.current_score_edit.setFocus()
+            return
+
         score = (
             self._parse_score(
                 text
@@ -2307,6 +2377,7 @@ class MainWindow(QMainWindow):
         )
 
         if score is None:
+            self.current_score_edit.setFocus()
             return
 
         self.state.update_current_score(
@@ -2314,13 +2385,23 @@ class MainWindow(QMainWindow):
         )
 
         self._save_settings()
-
+        self._update_committed_value_labels()
         self._update_calculation_display()
 
-    def _average_score_changed(
+        self.current_score_edit.clear()
+        self.current_score_edit.setFocus()
+
+    def _average_score_submitted(
         self,
-        text: str,
     ) -> None:
+        """Apply the average-score entry only when Enter is pressed."""
+
+        text = self.average_score_edit.text()
+
+        if not text.strip():
+            self.average_score_edit.setFocus()
+            return
+
         score = (
             self._parse_score(
                 text
@@ -2328,6 +2409,7 @@ class MainWindow(QMainWindow):
         )
 
         if score is None:
+            self.average_score_edit.setFocus()
             return
 
         self.state.update_average_score(
@@ -2335,8 +2417,11 @@ class MainWindow(QMainWindow):
         )
 
         self._save_settings()
-
+        self._update_committed_value_labels()
         self._update_calculation_display()
+
+        self.average_score_edit.clear()
+        self.average_score_edit.setFocus()
 
     # =========================================================
     # Event countdown
