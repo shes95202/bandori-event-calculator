@@ -217,3 +217,72 @@ def test_calculate_event_tw_benchmarks():
 
     assert q1_benchmark.calculation.remaining_score == 125_000
     assert q1_benchmark.calculation.required_games == 7
+
+def test_calculate_event_tolerates_temporarily_missing_tier_data():
+    event = Event(
+        id=324,
+        server=Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={
+            500: Cutoff(
+                score=120_000,
+                timestamp_ms=1_000,
+            ),
+        },
+        predictions={
+            100: 1_000_000,
+            500: 600_000,
+        },
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    # T100 is skipped until its first cutoff appears, but the available
+    # T500 calculation and the event-level progress remain usable.
+    assert 100 not in result.tiers
+    assert result.tiers[500].current_cutoff == 120_000
+    assert result.progress == pytest.approx(0.1)
+
+    # TW pace benchmarks require both T100 and T500, so they stay pending.
+    assert result.benchmarks == {}
+
+
+def test_calculate_event_works_before_bestdori_has_any_tier_data():
+    event = Event(
+        id=324,
+        server=Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=0,
+        end_at_ms=10_000,
+    )
+
+    snapshot = EventSnapshot(
+        event=event,
+        cutoffs={},
+        predictions={},
+    )
+
+    result = calculate_event(
+        snapshot=snapshot,
+        current_score=100_000,
+        average_score=10_000,
+        now_ms=1_000,
+    )
+
+    assert result.progress == pytest.approx(0.1)
+    assert result.projected_final_score == 1_000_000
+    assert result.tiers == {}
+    assert result.benchmarks == {}

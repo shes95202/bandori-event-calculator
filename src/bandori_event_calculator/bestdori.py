@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
+    sync_playwright,
+)
 
 
 BASE_URL = "https://bestdori.com"
@@ -432,20 +435,35 @@ def get_tracked_tiers(
 def get_event_tier_cutoffs(
     event: Event,
 ) -> dict[int, Cutoff]:
-    """Get the latest tracked tier cutoffs for a specific event."""
+    """
+    Get the latest available tracked tier cutoffs for a specific event.
+
+    Bestdori can temporarily return an empty cutoff list just after an
+    event starts.  That is a normal "data not ready yet" state and should
+    not make the whole event snapshot fail.  Missing tiers are therefore
+    skipped and will appear automatically on a later refresh once Bestdori
+    has published cutoff data.
+    """
 
     tiers = get_tracked_tiers(
         event.server
     )
 
-    return {
-        tier: get_latest_cutoff(
+    latest_cutoffs: dict[int, Cutoff] = {}
+
+    for tier in tiers:
+        cutoffs = fetch_cutoffs(
             server=event.server,
             event_id=event.id,
             tier=tier,
         )
-        for tier in tiers
-    }
+
+        if not cutoffs:
+            continue
+
+        latest_cutoffs[tier] = cutoffs[-1]
+
+    return latest_cutoffs
 
 
 def get_current_tier_cutoffs(
@@ -628,7 +646,14 @@ def get_event_tracker_url(
 def fetch_latest_predictions(
     server: Server,
 ) -> dict[int, int]:
-    """Fetch Latest Prediction values rendered by Bestdori."""
+    """
+    Fetch all currently available Latest Prediction values from Bestdori.
+
+    Immediately after an event starts, Bestdori may not have generated a
+    prediction for every tracked tier yet.  A missing prediction is treated
+    as temporarily unavailable rather than as a failure of the entire
+    server refresh.
+    """
 
     tiers = get_tracked_tiers(
         server
@@ -666,20 +691,26 @@ def fetch_latest_predictions(
                     tier=tier,
                 )
 
+                # Navigation/network errors are still real failures and are
+                # allowed to propagate.  Only the expected "prediction not
+                # available yet" condition is ignored.
                 page.goto(
                     url,
                     wait_until="domcontentloaded",
                     timeout=30_000,
                 )
 
-                page.wait_for_function(
-                    """
-                    () =>
-                        document.body.innerText.includes("最新預測") ||
-                        document.body.innerText.includes("Latest Prediction")
-                    """,
-                    timeout=15_000,
-                )
+                try:
+                    page.wait_for_function(
+                        """
+                        () =>
+                            document.body.innerText.includes("最新預測") ||
+                            document.body.innerText.includes("Latest Prediction")
+                        """,
+                        timeout=5_000,
+                    )
+                except PlaywrightTimeoutError:
+                    continue
 
                 text = (
                     page.locator(
@@ -688,13 +719,16 @@ def fetch_latest_predictions(
                     .inner_text()
                 )
 
-                predictions[
-                    tier
-                ] = (
-                    parse_latest_prediction_text(
-                        text
+                try:
+                    predictions[tier] = (
+                        parse_latest_prediction_text(
+                            text
+                        )
                     )
-                )
+                except ValueError:
+                    # The page loaded, but Bestdori has not published a
+                    # usable prediction yet.  Try again on the next refresh.
+                    continue
 
         finally:
             context.close()

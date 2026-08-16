@@ -162,12 +162,15 @@ def test_refresh_bestdori(
     assert state.snapshot == snapshot
     assert state.calculation is not None
 
-def test_inactive_snapshot_does_not_calculate():
+def test_inactive_snapshot_still_calculates_with_final_scores():
     snapshot = make_jp_snapshot()
     inactive_snapshot = EventSnapshot(
         event=snapshot.event,
         cutoffs=snapshot.cutoffs,
-        predictions={},
+        predictions={
+            tier: cutoff.score
+            for tier, cutoff in snapshot.cutoffs.items()
+        },
         is_active=False,
     )
 
@@ -180,4 +183,6 @@ def test_inactive_snapshot_does_not_calculate():
 
     state.recalculate()
 
-    assert state.calculation is None
+    assert state.calculation is not None
+    assert state.calculation.progress == 1.0
+    assert state.calculation.projected_final_score == 1_000_000

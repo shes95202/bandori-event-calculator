@@ -477,7 +477,11 @@ def test_get_display_event_snapshot_uses_previous_event(monkeypatch):
     assert result is not None
     assert result.event == previous_event
     assert result.cutoffs == cutoffs
-    assert result.predictions == {}
+    assert result.predictions == {
+        100: 3_000_000,
+        500: 2_000_000,
+        1000: 1_000_000,
+    }
     assert result.is_active is False
 
 
@@ -545,3 +549,36 @@ def test_get_display_event_snapshot_uses_current_event(monkeypatch):
     assert result.cutoffs == cutoffs
     assert result.predictions == predictions
     assert result.is_active is True
+
+
+def test_get_event_tier_cutoffs_skips_tiers_without_data(monkeypatch):
+    event = bestdori.Event(
+        id=324,
+        server=bestdori.Server.TW,
+        name="New TW Event",
+        event_type="mission_live",
+        start_at_ms=1_000,
+        end_at_ms=10_000,
+    )
+
+    available = {
+        100: [],
+        500: [
+            bestdori.Cutoff(
+                score=123_456,
+                timestamp_ms=2_000,
+            )
+        ],
+        1000: [],
+    }
+
+    monkeypatch.setattr(
+        bestdori,
+        "fetch_cutoffs",
+        lambda server, event_id, tier: available[tier],
+    )
+
+    result = bestdori.get_event_tier_cutoffs(event)
+
+    assert list(result) == [500]
+    assert result[500].score == 123_456

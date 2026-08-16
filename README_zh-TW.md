@@ -341,5 +341,5 @@ Bestdori 使用的 Chromium profile 會儲存在每台 Windows 電腦的本機�
 目前版本：
 
 ```text
-v0.3.0
+v0.3.1
 ```

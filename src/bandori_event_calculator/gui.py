@@ -2211,6 +2211,20 @@ class MainWindow(QMainWindow):
 
         if not snapshot.is_active:
             event_detail += "  |  已結束"
+        else:
+            expected_tiers = set(
+                (500, 1000, 2000)
+                if self.state.server == Server.JP
+                else (100, 500, 1000)
+            )
+
+            available_tiers = (
+                set(snapshot.cutoffs)
+                & set(snapshot.predictions)
+            )
+
+            if available_tiers != expected_tiers:
+                event_detail += "  |  Bestdori 資料等待中"
 
         self.event_detail_label.setText(
             event_detail
@@ -2541,33 +2555,41 @@ class MainWindow(QMainWindow):
 
         # -----------------------------------------------------
         # Benchmark / pace cards
+        #
+        # A newly started event may exist before Bestdori has
+        # published cutoff/prediction data.  Keep the normal cards
+        # visible in that case instead of making the whole layout
+        # disappear.
         # -----------------------------------------------------
 
-        benchmarks = list(
-            calculation.benchmarks.values()
-        )
+        if self.state.server == Server.JP:
+            benchmark_specs = (
+                ("t2000", "T2000"),
+                ("t500_t1000_average", "T500-T1000 平均"),
+            )
+        else:
+            benchmark_specs = (
+                ("t100_t500_average", "T100-T500 平均"),
+                ("t100_t500_q1", "T100-T500 Q1"),
+            )
 
-        for index, card in enumerate(
-            self.benchmark_cards
+        for card, (key, label) in zip(
+            self.benchmark_cards,
+            benchmark_specs,
         ):
-            if index >= len(
-                benchmarks
-            ):
-                card.clear_target()
-
-                card.setVisible(
-                    False
-                )
-
-                continue
-
-            benchmark = (
-                benchmarks[index]
+            benchmark = calculation.benchmarks.get(
+                key
             )
 
             card.setVisible(
                 True
             )
+
+            if benchmark is None:
+                card.clear_target(
+                    f"{label}  |  等待 Bestdori 資料"
+                )
+                continue
 
             self._update_benchmark_card(
                 card=card,
@@ -2579,32 +2601,36 @@ class MainWindow(QMainWindow):
         # Ranking cards
         # -----------------------------------------------------
 
-        tiers = sorted(
-            calculation.tiers.items(),
-            key=lambda item: item[0],
-        )
+        if self.state.server == Server.JP:
+            ranking_tiers = (
+                500,
+                1000,
+                2000,
+            )
+        else:
+            ranking_tiers = (
+                100,
+                500,
+                1000,
+            )
 
-        for index, card in enumerate(
-            self.ranking_cards
+        for card, tier in zip(
+            self.ranking_cards,
+            ranking_tiers,
         ):
-            if index >= len(
-                tiers
-            ):
-                card.clear_target()
-
-                card.setVisible(
-                    False
-                )
-
-                continue
-
-            tier, tier_result = (
-                tiers[index]
+            tier_result = calculation.tiers.get(
+                tier
             )
 
             card.setVisible(
                 True
             )
+
+            if tier_result is None:
+                card.clear_target(
+                    f"T{tier}  |  等待 Bestdori 資料"
+                )
+                continue
 
             self._update_tier_card(
                 card=card,

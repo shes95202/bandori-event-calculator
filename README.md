@@ -337,5 +337,5 @@ This project is an independent tool and is not affiliated with Bestdori, Bushiro
 Current release:
 
 ```text
-v0.3.0
+v0.3.1
 ```
