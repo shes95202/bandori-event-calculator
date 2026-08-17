@@ -193,18 +193,16 @@ def test_calculate_event_tw_benchmarks():
     assert result.progress == pytest.approx(0.5)
     assert result.projected_final_score == 1_000_000
 
-    average_benchmark = (
-        result.benchmarks["t100_t500_average"]
-    )
+    t100_benchmark = result.benchmarks["t100"]
 
-    assert average_benchmark.label == "T100-T500 平均"
-    assert average_benchmark.current_cutoff == 1_150_000
-    assert average_benchmark.predicted_score == 1_500_000
-    assert average_benchmark.expected_score == 750_000
-    assert average_benchmark.score_gap == 250_000
+    assert t100_benchmark.label == "T100"
+    assert t100_benchmark.current_cutoff == 1_500_000
+    assert t100_benchmark.predicted_score == 2_000_000
+    assert t100_benchmark.expected_score == 1_000_000
+    assert t100_benchmark.score_gap == 500_000
 
-    assert average_benchmark.calculation.remaining_score == 250_000
-    assert average_benchmark.calculation.required_games == 13
+    assert t100_benchmark.calculation.remaining_score == 500_000
+    assert t100_benchmark.calculation.required_games == 25
 
 
     q1_benchmark = result.benchmarks["t100_t500_q1"]
@@ -261,12 +259,12 @@ def test_calculate_event_tolerates_temporarily_missing_tier_data():
     assert t500.predicted_score == 600_000
     assert result.progress == pytest.approx(0.1)
 
-    # Since both predictions exist, the TW pace benchmark is usable even
-    # though the averaged current cutoff is still waiting for T100 cutoff.
-    average = result.benchmarks["t100_t500_average"]
-    assert average.current_cutoff is None
-    assert average.predicted_score == 800_000
-    assert average.calculation is not None
+    # The TW left pace benchmark uses T100 directly, so it is usable as
+    # soon as T100 prediction exists even if its cutoff has not appeared.
+    t100_benchmark = result.benchmarks["t100"]
+    assert t100_benchmark.current_cutoff is None
+    assert t100_benchmark.predicted_score == 1_000_000
+    assert t100_benchmark.calculation is not None
 
 
 def test_calculate_event_works_before_bestdori_has_any_tier_data():
@@ -334,10 +332,14 @@ def test_tw_t100_cutoff_is_kept_before_prediction_and_lower_tiers():
 
     assert 500 not in result.tiers
     assert 1000 not in result.tiers
-    assert result.benchmarks == {}
+
+    t100_benchmark = result.benchmarks["t100"]
+    assert t100_benchmark.current_cutoff == 250_000
+    assert t100_benchmark.predicted_score is None
+    assert t100_benchmark.calculation is None
 
 
-def test_tw_t100_and_t500_cutoffs_build_partial_benchmarks_before_predictions():
+def test_tw_t100_direct_and_q1_benchmarks_handle_partial_data():
     event = Event(
         id=324,
         server=Server.TW,
@@ -378,10 +380,10 @@ def test_tw_t100_and_t500_cutoffs_build_partial_benchmarks_before_predictions():
     assert result.tiers[500].predicted_score is None
     assert result.tiers[500].calculation is None
 
-    average = result.benchmarks["t100_t500_average"]
-    assert average.current_cutoff == 200_000
-    assert average.predicted_score is None
-    assert average.calculation is None
+    t100_benchmark = result.benchmarks["t100"]
+    assert t100_benchmark.current_cutoff == 300_000
+    assert t100_benchmark.predicted_score == 1_000_000
+    assert t100_benchmark.calculation is not None
 
     q1 = result.benchmarks["t100_t500_q1"]
     assert q1.current_cutoff == 150_000
@@ -389,7 +391,7 @@ def test_tw_t100_and_t500_cutoffs_build_partial_benchmarks_before_predictions():
     assert q1.calculation is None
 
 
-def test_tw_t1000_missing_does_not_block_t100_t500_or_benchmarks():
+def test_tw_t1000_missing_does_not_block_t100_or_q1_benchmarks():
     event = Event(
         id=324,
         server=Server.TW,
@@ -428,10 +430,10 @@ def test_tw_t1000_missing_does_not_block_t100_t500_or_benchmarks():
     assert result.tiers[500].calculation is not None
     assert 1000 not in result.tiers
 
-    average = result.benchmarks["t100_t500_average"]
-    assert average.current_cutoff == 200_000
-    assert average.predicted_score == 800_000
-    assert average.calculation is not None
+    t100_benchmark = result.benchmarks["t100"]
+    assert t100_benchmark.current_cutoff == 300_000
+    assert t100_benchmark.predicted_score == 1_000_000
+    assert t100_benchmark.calculation is not None
 
     q1 = result.benchmarks["t100_t500_q1"]
     assert q1.current_cutoff == 150_000

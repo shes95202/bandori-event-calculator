@@ -2660,13 +2660,18 @@ class MainWindow(QMainWindow):
         # -----------------------------------------------------
 
         if self.state.server == Server.JP:
+            # JP: show the T500-T1000 average on the left and T2000 on the
+            # right.  This only changes presentation order; calculations are
+            # unchanged.
             benchmark_specs = (
-                ("t2000", "T2000"),
                 ("t500_t1000_average", "T500-T1000 平均"),
+                ("t2000", "T2000"),
             )
         else:
+            # TW: use T100 directly for the left pace target.  The right
+            # target remains the Q1 point between T100 and T500.
             benchmark_specs = (
-                ("t100_t500_average", "T100-T500 平均"),
+                ("t100", "T100"),
                 ("t100_t500_q1", "T100-T500 Q1"),
             )
 

@@ -299,48 +299,21 @@ def calculate_event(
         t100 = tier_results.get(100)
         t500 = tier_results.get(500)
 
-        # Ranking data can appear progressively. These TW pace benchmarks
-        # depend only on T100 and T500, so a missing T1000 must never block
-        # data that is already available for their actual dependencies.
-        average_current_cutoff = _maybe_average(
-            (
-                t100.current_cutoff
-                if t100 is not None
-                else None
-            ),
-            (
-                t500.current_cutoff
-                if t500 is not None
-                else None
-            ),
-        )
-
-        average_predicted_score = _maybe_average(
-            (
-                t100.predicted_score
-                if t100 is not None
-                else None
-            ),
-            (
-                t500.predicted_score
-                if t500 is not None
-                else None
-            ),
-        )
-
-        if (
-            average_current_cutoff is not None
-            or average_predicted_score is not None
-        ):
-            benchmarks["t100_t500_average"] = _build_benchmark(
-                label="T100-T500 平均",
-                current_cutoff=average_current_cutoff,
-                predicted_score=average_predicted_score,
+        # TW left pace target uses T100 directly.  Keep it independent from
+        # T500/T1000 so T100 can become usable as soon as Bestdori publishes
+        # either its cutoff or prediction.
+        if t100 is not None:
+            benchmarks["t100"] = _build_benchmark(
+                label="T100",
+                current_cutoff=t100.current_cutoff,
+                predicted_score=t100.predicted_score,
                 current_score=current_score,
                 average_score=average_score,
                 progress=progress,
             )
 
+        # The right pace target remains the Q1 point between T100 and T500.
+        # T1000 is unrelated and must never block this benchmark.
         q1_current_cutoff = _maybe_quartile(
             higher_score=(
                 t100.current_cutoff
